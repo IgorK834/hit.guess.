@@ -1,16 +1,21 @@
 from contextlib import asynccontextmanager
 
+import redis.asyncio as redis
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.core.config import settings
+from app.db.session import engine
 from app.routers import health, v1
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI):
-    # Async startup (e.g. DB pools, Redis) goes here.
+async def lifespan(app: FastAPI):
+    app.state.redis = redis.from_url(settings.redis_url, decode_responses=True)
+    await app.state.redis.ping()
     yield
-    # Async shutdown goes here.
+    await app.state.redis.aclose()
+    await engine.dispose()
 
 
 app = FastAPI(
