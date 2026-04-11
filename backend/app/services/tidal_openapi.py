@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import random
 from typing import Any
@@ -93,6 +94,54 @@ async def search_track_ids_for_query(
         if len(dedup) >= max_ids:
             break
     return dedup
+
+
+async def search_tracks_with_display_metadata(
+    http: httpx.AsyncClient,
+    access_token: str,
+    query: str,
+    *,
+    country_code: str,
+    limit: int = 10,
+) -> list[dict[str, str]]:
+    """
+    Run a track search for `query` and resolve display fields per track.
+
+    Uses the OpenAPI v2 searchResults → tracks relationship (tracks only), then
+    fetches per-track metadata (title, artist, cover) up to `limit` results.
+    """
+    track_ids = await search_track_ids_for_query(
+        http,
+        access_token,
+        query,
+        country_code=country_code,
+        max_ids=limit,
+    )
+    if not track_ids:
+        return []
+
+    sem = asyncio.Semaphore(5)
+
+    async def one(tid: str) -> dict[str, str] | None:
+        async with sem:
+            meta = await fetch_track_display_metadata(
+                http,
+                access_token,
+                tid,
+                country_code=country_code,
+            )
+        if meta is None:
+            return None
+        title, artist, cover = meta
+        return {
+            "tidal_id": tid,
+            "title": title,
+            "artist": artist,
+            "cover_url": cover,
+        }
+
+    rows = await asyncio.gather(*(one(tid) for tid in track_ids))
+    return [r for r in rows if r is not None]
 
 
 async def playlist_track_ids(
