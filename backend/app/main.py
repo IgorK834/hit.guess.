@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.db.session import engine
 from app.routers import health, v1
+from app.scheduler import setup_scheduler
 
 
 @asynccontextmanager
@@ -19,7 +20,12 @@ async def lifespan(app: FastAPI):
     limits = httpx.Limits(max_keepalive_connections=20, max_connections=100)
     async with httpx.AsyncClient(timeout=timeout, limits=limits) as http_client:
         app.state.http_client = http_client
-        yield
+        scheduler = setup_scheduler(app)
+        scheduler.start()
+        try:
+            yield
+        finally:
+            scheduler.shutdown(wait=False)
 
     await app.state.redis.aclose()
     await engine.dispose()
