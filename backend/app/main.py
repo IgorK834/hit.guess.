@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 
+import httpx
 import redis.asyncio as redis
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,7 +14,13 @@ from app.routers import health, v1
 async def lifespan(app: FastAPI):
     app.state.redis = redis.from_url(settings.redis_url, decode_responses=True)
     await app.state.redis.ping()
-    yield
+
+    timeout = httpx.Timeout(30.0)
+    limits = httpx.Limits(max_keepalive_connections=20, max_connections=100)
+    async with httpx.AsyncClient(timeout=timeout, limits=limits) as http_client:
+        app.state.http_client = http_client
+        yield
+
     await app.state.redis.aclose()
     await engine.dispose()
 
