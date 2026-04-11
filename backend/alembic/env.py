@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from app.core.config import settings
 from app.db.base import Base
 from app.models import (  # noqa: F401 — register metadata
+    daily_song,
     game_stat,
     song,
     user,
