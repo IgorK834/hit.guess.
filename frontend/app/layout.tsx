@@ -16,6 +16,9 @@ const geistMono = localFont({
 export const metadata: Metadata = {
   title: "HIT.GUESS.",
   description: "Daily music guessing game (TidalGuess).",
+  openGraph: {
+    locale: "pl_PL",
+  },
 };
 
 export default function RootLayout({
@@ -24,7 +27,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="pl">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
