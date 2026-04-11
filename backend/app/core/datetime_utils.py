@@ -27,3 +27,16 @@ def get_service_timezone() -> ZoneInfo:
 def service_local_today() -> date:
     """Current calendar date in the service timezone (midnight job + DB `target_date` alignment)."""
     return datetime.now(get_service_timezone()).date()
+
+
+def calendar_today_in_zone(timezone_name: str | None) -> date:
+    if not timezone_name:
+        return service_local_today()
+    name = timezone_name.strip()
+    if not name or len(name) > 80:
+        return service_local_today()
+    try:
+        return datetime.now(ZoneInfo(name)).date()
+    except ZoneInfoNotFoundError:
+        logger.info("Unknown client timezone %r; using service-local date", name)
+        return service_local_today()
