@@ -32,6 +32,23 @@ class Settings(BaseSettings):
         default="https://auth.tidal.com/v1/oauth2/token",
         validation_alias="TIDAL_TOKEN_URL",
     )
+    tidal_openapi_base_url: str = Field(
+        default="https://openapi.tidal.com/v2",
+        validation_alias="TIDAL_OPENAPI_BASE_URL",
+    )
+    tidal_country_code: str = Field(
+        default="PL",
+        validation_alias="TIDAL_COUNTRY_CODE",
+    )
+    tidal_placeholder_cover_url: str = Field(
+        default="https://tidal.com/",
+        validation_alias="TIDAL_PLACEHOLDER_COVER_URL",
+    )
+
+    scheduler_timezone: str = Field(
+        default="Europe/Warsaw",
+        validation_alias="SCHEDULER_TIMEZONE",
+    )
 
 
 settings = Settings()
