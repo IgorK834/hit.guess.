@@ -2,6 +2,7 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
+      TZ: Europe/Warsaw
       POSTGRES_USER: ${POSTGRES_USER:-hitguess}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hitguess}
       POSTGRES_DB: ${POSTGRES_DB:-hitguess}
@@ -17,6 +18,8 @@ services:
 
   redis:
     image: redis:7-alpine
+    environment:
+      TZ: Europe/Warsaw
     command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "${REDIS_PORT:-6379}:6379"
