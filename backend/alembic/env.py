@@ -13,6 +13,7 @@ from app.db.base import Base
 from app.models import (  # noqa: F401 — register metadata
     daily_song,
     game_stat,
+    leaderboard,
     song,
     user,
 )
