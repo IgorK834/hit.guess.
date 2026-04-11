@@ -19,12 +19,7 @@ class DailySong(Base):
         primary_key=True,
         default=uuid.uuid4,
     )
-    tidal_track_id: Mapped[str] = mapped_column(
-        String(64),
-        unique=True,
-        index=True,
-        nullable=False,
-    )
+    tidal_track_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     preview_url: Mapped[str] = mapped_column(String(2048), nullable=False)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     artist: Mapped[str] = mapped_column(String(512), nullable=False)
