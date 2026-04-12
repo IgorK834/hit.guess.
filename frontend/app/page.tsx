@@ -21,7 +21,11 @@ export default function Home() {
   const g = useGame();
 
   const busy = g.dailyLoading || g.guessSubmitting;
-  const canInteract = !busy && !g.isTerminal && !!g.daily;
+  const canInteract =
+    !busy &&
+    !g.isFinished &&
+    (g.gameState === "PLAYING" || g.gameState === "PAUSED") &&
+    !!g.daily;
 
   return (
     <div className="relative flex h-[100dvh] max-h-[100dvh] flex-col overflow-hidden bg-[#EBE7DF] text-black">
@@ -97,10 +101,14 @@ export default function Home() {
 
           <div className="mb-5 shrink-0">
             <AudioPlayer
-              previewUrl={g.daily?.preview_url}
+              previewUrl={g.previewUrl ?? g.daily?.preview_url}
               currentAttempt={g.attemptsUsed}
               attemptEpoch={g.attemptsUsed}
-              disabled={!canInteract}
+              disabled={g.dailyLoading || !canInteract}
+              onPlayingChange={(playing) => {
+                if (playing) g.startGame();
+                else g.pauseGame();
+              }}
             />
           </div>
 
@@ -178,7 +186,7 @@ export default function Home() {
         </div>
       </footer>
 
-      {g.isTerminal && g.reveal ? (
+      {g.isFinished && g.reveal ? (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-[#EBE7DF]/95 px-4 backdrop-blur-[1px]">
           <div className="w-full max-w-md border-2 border-black bg-[#EBE7DF] p-6 text-center shadow-[8px_8px_0_0_rgba(0,0,0,0.08)]">
             <p className="text-xs font-black uppercase tracking-[0.2em]" style={{ color: "#0000FF" }}>
