@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
+import Hls from "hls.js";
 import { Pause, Play } from "lucide-react";
 
 import { AUDIO_SEGMENT_CAPS } from "@/hooks/use-game";
@@ -27,10 +28,16 @@ function segmentLimitForAttempt(attempt: number): number {
   return AUDIO_SEGMENT_CAPS[clampAttempt(attempt)];
 }
 
+function isHlsUrl(url: string): boolean {
+  return /\.m3u8(\?|$)/i.test(url);
+}
+
 export type AudioPlayerProps = {
   previewUrl: string | null | undefined;
   currentAttempt: number;
   attemptEpoch: number;
+  /** When this changes (e.g. category switch), scrub time + progress bar reset for the new deck. */
+  deckId?: string;
   disabled?: boolean;
   expandTimelineTo30s?: boolean;
   onPlayingChange?: (playing: boolean) => void;
@@ -40,13 +47,18 @@ export function AudioPlayer({
   previewUrl,
   currentAttempt,
   attemptEpoch,
+  deckId = "",
   disabled,
   expandTimelineTo30s = false,
   onPlayingChange,
 }: AudioPlayerProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const hlsRef = useRef<Hls | null>(null);
   const rafRef = useRef<number | null>(null);
   const playingRef = useRef(false);
+  /** Parent often passes an inline `onPlayingChange` → must not land in effect deps. */
+  const onPlayingChangeRef = useRef(onPlayingChange);
+  onPlayingChangeRef.current = onPlayingChange;
 
   const segmentLimit = useMemo(
     () => segmentLimitForAttempt(currentAttempt),
@@ -59,8 +71,6 @@ export function AudioPlayer({
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [displayTime, setDisplayTime] = useState(0);
-  const [isBuffering, setIsBuffering] = useState(true);
-  const [mediaReady, setMediaReady] = useState(false);
 
   const stopRaf = useCallback(() => {
     if (rafRef.current != null) {
@@ -69,14 +79,11 @@ export function AudioPlayer({
     }
   }, []);
 
-  const setPlaying = useCallback(
-    (next: boolean) => {
-      playingRef.current = next;
-      setIsPlaying(next);
-      onPlayingChange?.(next);
-    },
-    [onPlayingChange],
-  );
+  const setPlaying = useCallback((next: boolean) => {
+    playingRef.current = next;
+    setIsPlaying(next);
+    onPlayingChangeRef.current?.(next);
+  }, []);
 
   const pumpPlayback = useCallback(() => {
     const el = audioRef.current;
@@ -100,85 +107,103 @@ export function AudioPlayer({
   }, [segmentLimit, setPlaying, stopRaf]);
 
   useEffect(() => {
-    if (!previewUrl) return undefined;
-
-    let cancelled = false;
-
-    const attach = (el: HTMLAudioElement) => {
-      const onWaiting = () => setIsBuffering(true);
-      const onCanPlay = () => {
-        setIsBuffering(false);
-        setMediaReady(true);
-      };
-      const onPlaying = () => setIsBuffering(false);
-      const onLoadStart = () => {
-        setMediaReady(false);
-        setIsBuffering(true);
-      };
-
-      el.addEventListener("waiting", onWaiting);
-      el.addEventListener("canplay", onCanPlay);
-      el.addEventListener("canplaythrough", onCanPlay);
-      el.addEventListener("playing", onPlaying);
-      el.addEventListener("loadstart", onLoadStart);
-
-      if (el.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
-        setMediaReady(true);
-        setIsBuffering(false);
-      }
-
-      return () => {
-        el.removeEventListener("waiting", onWaiting);
-        el.removeEventListener("canplay", onCanPlay);
-        el.removeEventListener("canplaythrough", onCanPlay);
-        el.removeEventListener("playing", onPlaying);
-        el.removeEventListener("loadstart", onLoadStart);
-      };
-    };
-
-    const el = audioRef.current;
-    if (el) {
-      return attach(el);
+    if (!previewUrl) {
+      hlsRef.current?.destroy();
+      hlsRef.current = null;
+      setDisplayTime(0);
+      stopRaf();
+      playingRef.current = false;
+      setIsPlaying(false);
+      onPlayingChangeRef.current?.(false);
+      return undefined;
     }
 
-    let detach: (() => void) | undefined;
-    const raf = requestAnimationFrame(() => {
-      if (cancelled) return;
-      const next = audioRef.current;
-      if (next) detach = attach(next);
-    });
+    let cancelled = false;
+    /** Snapshot for cleanup (avoid stale `audioRef.current` in teardown). */
+    let boundEl: HTMLAudioElement | null = null;
+
+    const teardown = () => {
+      hlsRef.current?.destroy();
+      hlsRef.current = null;
+      if (boundEl) {
+        boundEl.pause();
+        boundEl.removeAttribute("src");
+        boundEl.load();
+      }
+      boundEl = null;
+    };
+
+    const attach = (el: HTMLAudioElement) => {
+      teardown();
+      boundEl = el;
+      el.crossOrigin = "anonymous";
+      el.removeAttribute("src");
+      el.load();
+
+      const hlsUrl = isHlsUrl(previewUrl);
+
+      if (hlsUrl && Hls.isSupported()) {
+        const hls = new Hls({
+          // Worker fetch can break CORS on some CDN manifests; main-thread XHR is more predictable.
+          enableWorker: false,
+          lowLatencyMode: false,
+        });
+        hlsRef.current = hls;
+        hls.loadSource(previewUrl);
+        hls.attachMedia(el);
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (data.fatal) {
+            hls.destroy();
+            hlsRef.current = null;
+          }
+        });
+      } else if (hlsUrl && el.canPlayType("application/vnd.apple.mpegurl")) {
+        el.src = previewUrl;
+      } else {
+        el.src = previewUrl;
+      }
+    };
+
+    const elNow = audioRef.current;
+    if (elNow) {
+      attach(elNow);
+    } else {
+      const raf = requestAnimationFrame(() => {
+        if (cancelled) return;
+        const next = audioRef.current;
+        if (next) attach(next);
+      });
+      return () => {
+        cancelled = true;
+        cancelAnimationFrame(raf);
+        teardown();
+      };
+    }
 
     return () => {
       cancelled = true;
-      cancelAnimationFrame(raf);
-      detach?.();
+      teardown();
     };
-  }, [previewUrl]);
+  }, [previewUrl, stopRaf]);
 
-  useEffect(() => {
-    if (!previewUrl) {
-      setMediaReady(false);
-      setIsBuffering(false);
-      setDisplayTime(0);
-      stopRaf();
-      setPlaying(false);
-    }
-  }, [previewUrl, stopRaf, setPlaying]);
-
+  // Only reset media when the *round* changes — not on every parent re-render (unstable callbacks
+  // from inline props used to make this effect re-run constantly and kill HLS / currentTime).
   useEffect(() => {
     const el = audioRef.current;
-    if (!el) return;
+    if (!el || !previewUrl) return;
     el.pause();
     el.currentTime = 0;
     setDisplayTime(0);
-    setPlaying(false);
+    playingRef.current = false;
+    setIsPlaying(false);
+    onPlayingChangeRef.current?.(false);
     stopRaf();
-  }, [attemptEpoch, previewUrl, segmentLimit, setPlaying, stopRaf]);
+  }, [attemptEpoch, previewUrl, segmentLimit, stopRaf, deckId]);
 
   useEffect(() => () => stopRaf(), [stopRaf]);
 
   const toggle = useCallback(() => {
-    if (disabled || !previewUrl || !mediaReady || isBuffering) return;
+    if (disabled || !previewUrl) return;
     const el = audioRef.current;
     if (!el) return;
 
@@ -208,8 +233,6 @@ export function AudioPlayer({
   }, [
     disabled,
     previewUrl,
-    mediaReady,
-    isBuffering,
     isPlaying,
     segmentLimit,
     pumpPlayback,
@@ -217,8 +240,9 @@ export function AudioPlayer({
     stopRaf,
   ]);
 
-  const playDisabled =
-    Boolean(disabled) || !previewUrl || !mediaReady || isBuffering;
+  // Chrome cannot play TIDAL HLS via raw <audio src>; hls.js handles that. Never gate the button on
+  // canplay — those events often never fire for m3u8 in Chromium.
+  const playDisabled = Boolean(disabled) || !previewUrl;
 
   const timeLabelColor = isPlaying ? "#0000FF" : "rgba(0,0,0,0.55)";
 
@@ -228,8 +252,8 @@ export function AudioPlayer({
         <audio
           key={previewUrl}
           ref={audioRef}
-          src={previewUrl}
           preload="auto"
+          playsInline
           className="hidden"
           onPause={() => {
             stopRaf();
@@ -301,7 +325,6 @@ function SegmentedProgressVisualizer({
   return (
     <div className="min-w-0 flex-1">
       <div className="relative h-3 overflow-visible rounded-sm border border-black/20 bg-[#EBE7DF]">
-        {/* Unlocked (allowed) window */}
         <div
           className="absolute inset-y-0 left-0 z-0 border-r border-black/25 bg-[#a0a0a0]"
           style={{ width: `${limitPct}%` }}
