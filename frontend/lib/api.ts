@@ -110,5 +110,4 @@ export async function submitGuess(payload: GuessPayload): Promise<GuessResponse>
   return parseJson<GuessResponse>(res);
 }
 
-/** Sentinel TIDAL id for skip — never matches a real catalogue id. */
 export const SKIP_GUESS_TIDAL_ID = "__HITGUESS_SKIP__";
