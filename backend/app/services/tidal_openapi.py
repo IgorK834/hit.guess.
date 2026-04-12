@@ -16,6 +16,20 @@ logger = logging.getLogger(__name__)
 JSONAPI_ACCEPT = "application/vnd.api+json"
 
 
+def _normalize_cover_href(href: str) -> str:
+    """TIDAL sometimes returns protocol-relative or site-relative cover `href` values."""
+    h = href.strip()
+    if not h:
+        return ""
+    if h.startswith("//"):
+        return f"https:{h}"
+    if h.startswith("http://") or h.startswith("https://"):
+        return h
+    if h.startswith("/"):
+        return f"https://resources.tidal.com{h}"
+    return h
+
+
 def _jsonapi_headers(access_token: str) -> dict[str, str]:
     return {
         "Authorization": f"Bearer {access_token}",
@@ -38,6 +52,64 @@ def _resource_attributes(res: dict[str, Any]) -> dict[str, Any]:
     return attrs if isinstance(attrs, dict) else {}
 
 
+def _collect_track_ids_from_search_payload(payload: dict[str, Any]) -> list[str]:
+    """
+    Extract track ids from a `searchResults` JSON:API document.
+
+    Prefer the `tracks` relationship on the search result (songs only — not albums/playlists).
+    """
+    ids: list[str] = []
+    data_root = payload.get("data")
+    roots: list[dict[str, Any]] = []
+    if isinstance(data_root, dict):
+        roots = [data_root]
+    elif isinstance(data_root, list):
+        roots = [x for x in data_root if isinstance(x, dict)]
+
+    for root in roots:
+        rel = root.get("relationships") if isinstance(root.get("relationships"), dict) else {}
+        tr = rel.get("tracks") if isinstance(rel.get("tracks"), dict) else {}
+        tr_data = tr.get("data")
+        refs: list[dict[str, Any]] = []
+        if isinstance(tr_data, list):
+            refs = [x for x in tr_data if isinstance(x, dict)]
+        elif isinstance(tr_data, dict):
+            refs = [tr_data]
+        for ref in refs:
+            if ref.get("type") == "tracks" and isinstance(ref.get("id"), str):
+                ids.append(ref["id"])
+
+    if ids:
+        return ids
+
+    for inc in payload.get("included") or []:
+        if not isinstance(inc, dict) or inc.get("type") != "tracks":
+            continue
+        iid = inc.get("id")
+        if isinstance(iid, str):
+            ids.append(iid)
+
+    if ids:
+        return ids
+
+    # Fallback: linkage array on `/relationships/tracks` sub-resource
+    for item in payload.get("data") or []:
+        if not isinstance(item, dict):
+            continue
+        itype = item.get("type")
+        iid = item.get("id")
+        if itype == "tracks" and isinstance(iid, str):
+            ids.append(iid)
+            continue
+        rel = item.get("relationships") if isinstance(item.get("relationships"), dict) else {}
+        tr = rel.get("track") if isinstance(rel.get("track"), dict) else {}
+        trd = tr.get("data") if isinstance(tr.get("data"), dict) else {}
+        if trd.get("type") == "tracks" and isinstance(trd.get("id"), str):
+            ids.append(trd["id"])
+
+    return ids
+
+
 async def search_track_ids_for_query(
     http: httpx.AsyncClient,
     access_token: str,
@@ -46,9 +118,11 @@ async def search_track_ids_for_query(
     country_code: str,
     max_ids: int = 80,
 ) -> list[str]:
-    """Return track resource ids from global search for the given free-text query."""
+    """Return track resource ids from global search (songs only — `searchResults.tracks` relationship)."""
     encoded = quote(query, safe="")
-    url = f"{settings.tidal_openapi_base_url.rstrip('/')}/searchResults/{encoded}/relationships/tracks"
+    base = settings.tidal_openapi_base_url.rstrip("/")
+    # Primary: full search document with tracks relationship only (no albums in include).
+    url = f"{base}/searchResults/{encoded}"
     params: list[tuple[str, str]] = [
         ("countryCode", country_code),
         ("include", "tracks"),
@@ -69,21 +143,18 @@ async def search_track_ids_for_query(
         return []
 
     payload = response.json()
-    ids: list[str] = []
+    ids = _collect_track_ids_from_search_payload(payload)
 
-    for item in payload.get("data") or []:
-        if not isinstance(item, dict):
-            continue
-        itype = item.get("type")
-        iid = item.get("id")
-        if itype == "tracks" and isinstance(iid, str):
-            ids.append(iid)
-            continue
-        rel = item.get("relationships") if isinstance(item.get("relationships"), dict) else {}
-        tr = rel.get("track") if isinstance(rel.get("track"), dict) else {}
-        trd = tr.get("data") if isinstance(tr.get("data"), dict) else {}
-        if trd.get("type") == "tracks" and isinstance(trd.get("id"), str):
-            ids.append(trd["id"])
+    if not ids:
+        # Legacy path (some catalogue versions expose linkage only here)
+        url_rel = f"{base}/searchResults/{encoded}/relationships/tracks"
+        try:
+            response = await http.get(url_rel, headers=_jsonapi_headers(access_token), params=params)
+            response.raise_for_status()
+            payload = response.json()
+            ids = _collect_track_ids_from_search_payload(payload)
+        except (HTTPStatusError, httpx.RequestError):
+            logger.debug("TIDAL search fallback relationships/tracks failed query=%r", query, exc_info=True)
 
     dedup: list[str] = []
     seen: set[str] = set()
@@ -277,6 +348,8 @@ async def fetch_track_display_metadata(
     data = payload.get("data")
     if not isinstance(data, dict):
         return None
+    if data.get("type") != "tracks":
+        return None
     index = _index_included(payload)
     attrs = _resource_attributes(data)
     title = attrs.get("title")
@@ -386,7 +459,7 @@ async def _fetch_album_cover_url(
                     area = w * h
                     if area > best_area:
                         best_area = area
-                        best_href = href.strip()
+                        best_href = _normalize_cover_href(href)
 
     return best_href
 
