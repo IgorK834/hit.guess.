@@ -3,7 +3,9 @@
 import { AudioPlayer } from "@/components/audio-player";
 import { GuessFields } from "@/components/guess-fields";
 import { SearchCombobox } from "@/components/search-combobox";
-import { useGame } from "@/hooks/use-game";
+import { useGame, wipeAllHitGuessLocalStorage } from "@/hooks/use-game";
+import { ENABLE_STRICT_CATEGORY_LOGIC } from "@/lib/feature-flags";
+import { safeAlbumCoverSrc } from "@/lib/cover-url";
 
 type GameCategoryPanelProps = {
   /** Pill label — must match `GET /daily?category=` and localStorage scope. */
@@ -11,8 +13,7 @@ type GameCategoryPanelProps = {
 };
 
 /**
- * One mount = one category. Parent must use `key={category}` so switching pills
- * unmounts the previous deck (flush to LS) and mounts a clean tree for the next.
+ * With strict dev mode (`NEXT_PUBLIC_DEV_MODE=true`), parent remounts per category via `key`.
  */
 export function GameCategoryPanel({ category }: GameCategoryPanelProps) {
   const g = useGame(category);
@@ -22,14 +23,37 @@ export function GameCategoryPanel({ category }: GameCategoryPanelProps) {
 
   const canPlayPreview =
     !g.dailyLoading &&
-    !g.isFinished &&
-    g.gameState !== "LOCKED" &&
-    previewForAudio.length > 0;
+    previewForAudio.length > 0 &&
+    (g.isFinished || g.gameState !== "LOCKED");
 
-  const canGuess = canPlayPreview && Boolean(g.gameId);
+  const canGuess =
+    canPlayPreview && Boolean(g.gameId) && !g.isFinished;
 
   return (
     <>
+      {ENABLE_STRICT_CATEGORY_LOGIC ? (
+        <div className="fixed bottom-3 right-3 z-[60] flex flex-col gap-1">
+          <button
+            type="button"
+            className="border border-black/40 bg-[#EBE7DF] px-2 py-1 font-mono text-[8px] font-bold uppercase tracking-wide text-black shadow-sm hover:bg-black/5"
+            title="Usuwa stan i sesję tej kategorii z localStorage i ładuje dzisiejszą rundę od zera"
+            onClick={() => void g.reloadDaily()}
+          >
+            DEV: reset kategorii
+          </button>
+          <button
+            type="button"
+            className="border border-black/40 bg-[#EBE7DF] px-2 py-1 font-mono text-[8px] font-bold uppercase tracking-wide text-black shadow-sm hover:bg-black/5"
+            title="Usuwa WSZYSTKIE klucze hit_guess_* (wszystkie kategorie i daty), potem przeładowanie — jak świeża przeglądarka"
+            onClick={() => {
+              wipeAllHitGuessLocalStorage();
+              window.location.reload();
+            }}
+          >
+            DEV: czysty start (całość)
+          </button>
+        </div>
+      ) : null}
       {g.loadError ? (
         <div className="mb-3 shrink-0 border border-red-800/30 bg-red-50/90 p-3 text-[11px] font-bold uppercase leading-snug text-red-900">
           {g.loadError}
@@ -51,6 +75,8 @@ export function GameCategoryPanel({ category }: GameCategoryPanelProps) {
           previewUrl={g.previewUrl ?? g.daily?.preview_url}
           currentAttempt={g.attemptsUsed}
           attemptEpoch={g.attemptsUsed}
+          isFinished={g.isFinished}
+          expandTimelineTo30s={g.isFinished}
           disabled={!canPlayPreview}
           onPlayingChange={(playing) => {
             if (playing) g.startGame();
@@ -108,11 +134,18 @@ export function GameCategoryPanel({ category }: GameCategoryPanelProps) {
               {category}
             </p>
             <img
-              src={g.reveal.album_cover}
+              src={safeAlbumCoverSrc(g.reveal.album_cover)}
               alt=""
+              referrerPolicy="no-referrer"
               className="mx-auto mt-4 h-40 w-40 border border-black/15 object-cover"
               width={160}
               height={160}
+              onError={(e) => {
+                const el = e.currentTarget;
+                if (el.getAttribute("data-fallback") === "1") return;
+                el.setAttribute("data-fallback", "1");
+                el.src = "/placeholder-album.svg";
+              }}
             />
             <h3 className="mt-4 text-lg font-black uppercase leading-tight text-black">
               {g.reveal.title}

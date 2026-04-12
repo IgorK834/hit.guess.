@@ -21,6 +21,7 @@ import {
   PopoverContent,
 } from "@/components/ui/popover";
 import { searchTracks, type SearchTrackResult, ApiError } from "@/lib/api";
+import { safeAlbumCoverSrc } from "@/lib/cover-url";
 import { cn } from "@/lib/utils";
 
 const DEBOUNCE_MS = 300;
@@ -204,11 +205,18 @@ export function SearchCombobox({
                     className="rounded-none"
                   >
                     <img
-                      src={r.cover_url}
+                      src={safeAlbumCoverSrc(r.cover_url)}
                       alt=""
                       width={32}
                       height={32}
+                      referrerPolicy="no-referrer"
                       className="h-8 w-8 shrink-0 border border-black/10 object-cover"
+                      onError={(e) => {
+                        const el = e.currentTarget;
+                        if (el.getAttribute("data-fallback") === "1") return;
+                        el.setAttribute("data-fallback", "1");
+                        el.src = "/placeholder-album.svg";
+                      }}
                     />
                     <div className="flex min-w-0 flex-1 flex-col gap-0.5 text-left">
                       <span className="truncate text-[11px] font-bold uppercase leading-tight text-black">

@@ -40,6 +40,8 @@ export type AudioPlayerProps = {
   deckId?: string;
   disabled?: boolean;
   expandTimelineTo30s?: boolean;
+  /** After WON/LOST — allow full preview segment instead of capping at the winning attempt length. */
+  isFinished?: boolean;
   onPlayingChange?: (playing: boolean) => void;
 };
 
@@ -50,6 +52,7 @@ export function AudioPlayer({
   deckId = "",
   disabled,
   expandTimelineTo30s = false,
+  isFinished = false,
   onPlayingChange,
 }: AudioPlayerProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -60,14 +63,17 @@ export function AudioPlayer({
   const onPlayingChangeRef = useRef(onPlayingChange);
   onPlayingChangeRef.current = onPlayingChange;
 
-  const segmentLimit = useMemo(
-    () => segmentLimitForAttempt(currentAttempt),
-    [currentAttempt],
-  );
+  const segmentLimit = useMemo(() => {
+    if (isFinished) {
+      return TIMELINE_WIN_SECONDS;
+    }
+    return segmentLimitForAttempt(currentAttempt);
+  }, [currentAttempt, isFinished]);
 
-  const visualTotalSeconds = expandTimelineTo30s
-    ? TIMELINE_WIN_SECONDS
-    : TIMELINE_GAME_SECONDS;
+  const visualTotalSeconds =
+    expandTimelineTo30s || isFinished
+      ? TIMELINE_WIN_SECONDS
+      : TIMELINE_GAME_SECONDS;
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [displayTime, setDisplayTime] = useState(0);
