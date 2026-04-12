@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.db.session import engine
-from app.routers import cover, game, health, search, stats, v1
+from app.routers import cover, game, health, preview, search, stats, v1
 from app.scheduler import setup_scheduler
 
 
@@ -53,6 +53,7 @@ app.include_router(health.router)
 app.include_router(v1.router, prefix="/api/v1")
 app.include_router(game.router, prefix="/api/v1/game")
 app.include_router(cover.router, prefix="/api/v1/cover")
+app.include_router(preview.router, prefix="/api/v1/preview")
 app.include_router(search.router, prefix="/api/v1/search")
 app.include_router(stats.router, prefix="/api/v1/stats")
 

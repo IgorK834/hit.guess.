@@ -23,6 +23,8 @@ from app.services.game_guess_state import (
     game_state_redis_key,
     score_for_win,
 )
+from app.services.tidal_auth import TidalAuthError
+from app.services.tidal_openapi import fetch_preview_manifest_uri
 
 logger = logging.getLogger(__name__)
 
@@ -154,9 +156,32 @@ async def get_daily_game(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No daily song configured for today.",
         )
+    # Stored `preview_url` contains time-limited tokens; TIDAL returns 403 when they expire.
+    preview_url = row.preview_url
+    try:
+        token = await tidal_auth.get_access_token()
+    except TidalAuthError:
+        logger.warning(
+            "TIDAL auth failed; returning stored preview_url (may be expired) track_id=%s",
+            row.tidal_track_id,
+        )
+    else:
+        fresh = await fetch_preview_manifest_uri(
+            http,
+            token,
+            row.tidal_track_id,
+        )
+        if fresh:
+            preview_url = fresh
+        else:
+            logger.warning(
+                "Could not refresh preview manifest; stored URL may 403 track_id=%s",
+                row.tidal_track_id,
+            )
+
     return DailyGameResponse(
         game_id=row.internal_id,
-        preview_url=row.preview_url,
+        preview_url=preview_url,
     )
 
 
