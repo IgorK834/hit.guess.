@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import date
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Header, HTTPException, Query, status
+from fastapi import APIRouter, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -26,6 +27,25 @@ from app.services.game_guess_state import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["game"])
+
+_DAILY_GEN_LOCK_SEC = 55
+_DAILY_GEN_LOCK_BLOCK_SEC = 50
+_TERMINAL_IP_MARK_TTL_SEC = 8 * 24 * 3600
+
+
+def _client_ip(request: Request) -> str:
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        first = xff.split(",")[0].strip()
+        if first:
+            return first
+    if request.client is not None:
+        return request.client.host
+    return "unknown"
+
+
+def _daily_terminal_ip_redis_key(game_date: date, category_slug: str, ip: str) -> str:
+    return f"hitguess:daily_terminal:{game_date.isoformat()}:{category_slug}:{ip}"
 
 # UI pill labels (exact match) → DB `daily_songs.category` slug.
 _UI_CATEGORY_TO_ENUM: dict[str, DailyMusicCategory] = {
@@ -75,6 +95,7 @@ class DailyGameResponse(BaseModel):
 )
 async def get_daily_game(
     db: DbSession,
+    redis: RedisClient,
     tidal_auth: TidalAuth,
     http: HttpClient,
     category: Annotated[
@@ -99,20 +120,35 @@ async def get_daily_game(
     )
     row = result.scalar_one_or_none()
     if row is None:
-        await ensure_daily_song_for_category(
-            db,
-            tidal_auth,
-            http,
-            target_date=today,
-            music_category=music_category,
+        lock_key = f"lock:daily_song_generation:{today.isoformat()}:{music_category.value}"
+        lock = redis.lock(
+            lock_key,
+            timeout=_DAILY_GEN_LOCK_SEC,
+            blocking_timeout=_DAILY_GEN_LOCK_BLOCK_SEC,
         )
-        result = await db.execute(
-            select(DailySong).where(
-                DailySong.target_date == today,
-                DailySong.category == music_category.value,
-            ),
-        )
-        row = result.scalar_one_or_none()
+        async with lock:
+            result = await db.execute(
+                select(DailySong).where(
+                    DailySong.target_date == today,
+                    DailySong.category == music_category.value,
+                ),
+            )
+            row = result.scalar_one_or_none()
+            if row is None:
+                await ensure_daily_song_for_category(
+                    db,
+                    tidal_auth,
+                    http,
+                    target_date=today,
+                    music_category=music_category,
+                )
+                result = await db.execute(
+                    select(DailySong).where(
+                        DailySong.target_date == today,
+                        DailySong.category == music_category.value,
+                    ),
+                )
+                row = result.scalar_one_or_none()
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -149,6 +185,7 @@ class GuessResponse(BaseModel):
     summary="Submit a guess (server-tracked attempts, anti-cheat)",
 )
 async def submit_guess(
+    request: Request,
     body: GuessRequest,
     db: DbSession,
     redis: RedisClient,
@@ -167,24 +204,41 @@ async def submit_guess(
         correct_tidal_track_id=daily.tidal_track_id,
     )
 
-    if gs.won_transition:
-        entry = LeaderboardEntry(
-            session_id=body.session_id,
-            username=None,
-            score=score_for_win(gs.attempts),
-            attempts_used=gs.attempts,
-            game_date=daily.target_date,
+    client_ip = _client_ip(request)
+    is_first_terminal_for_ip = False
+    if gs.status in ("WON", "LOST"):
+        tkey = _daily_terminal_ip_redis_key(daily.target_date, daily.category, client_ip)
+        is_first_terminal_for_ip = bool(
+            await redis.set(tkey, "1", ex=_TERMINAL_IP_MARK_TTL_SEC, nx=True),
         )
-        db.add(entry)
-        try:
-            await db.commit()
-        except IntegrityError:
-            await db.rollback()
+
+    if gs.won_transition:
+        if not is_first_terminal_for_ip:
             logger.info(
-                "Duplicate leaderboard row for session=%s game_date=%s (idempotent win)",
-                body.session_id,
+                "Leaderboard skip (IP already finished this daily category): ip=%s game_date=%s category=%s session=%s",
+                client_ip,
                 daily.target_date,
+                daily.category,
+                body.session_id,
             )
+        else:
+            entry = LeaderboardEntry(
+                session_id=body.session_id,
+                username=None,
+                score=score_for_win(gs.attempts),
+                attempts_used=gs.attempts,
+                game_date=daily.target_date,
+            )
+            db.add(entry)
+            try:
+                await db.commit()
+            except IntegrityError:
+                await db.rollback()
+                logger.info(
+                    "Duplicate leaderboard row for session=%s game_date=%s (idempotent win)",
+                    body.session_id,
+                    daily.target_date,
+                )
 
     details: TrackDetails | None = None
     if gs.status in ("WON", "LOST"):
