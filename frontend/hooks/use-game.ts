@@ -12,6 +12,7 @@ import {
   fetchDailyGame,
   ApiError,
 } from "@/lib/api";
+import { ENABLE_STRICT_CATEGORY_LOGIC } from "@/lib/feature-flags";
 import { getLocalDateKey } from "@/lib/clientTimezone";
 
 /** Legacy single-blob key (v2/v3) — migrated once into per-category keys. */
@@ -31,6 +32,29 @@ export function dailyStateStorageKey(date: string, category: string): string {
 /** Per-category anonymous session (Redis / leaderboard isolation). */
 export function dailySessionStorageKey(date: string, category: string): string {
   return `hit_guess_session_${date}_${categoryKeySuffix(category)}`;
+}
+
+/**
+ * Removes every Hit.Guess. blob from `localStorage` (all dates and categories, legacy key).
+ * After calling, reload the page so React state matches empty storage.
+ */
+export function wipeAllHitGuessLocalStorage(): void {
+  if (typeof window === "undefined") return;
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const k = window.localStorage.key(i);
+      if (!k) continue;
+      if (k === LEGACY_DAILY_STORAGE_KEY || k.startsWith("hit_guess_")) {
+        keys.push(k);
+      }
+    }
+    for (const k of keys) {
+      window.localStorage.removeItem(k);
+    }
+  } catch {
+    /* quota / private mode */
+  }
 }
 
 export type GameState = "IDLE" | "PLAYING" | "PAUSED" | "LOCKED" | "FINISHED";
@@ -368,8 +392,8 @@ type PersistMirror = {
 };
 
 /**
- * Game hook for **one** category. Parent should remount with `key={category}` so each pill
- * gets a fresh React tree — no shared state bleed between categories.
+ * Game hook for **one** category. With `NEXT_PUBLIC_DEV_MODE=true`, parent should remount with
+ * `key={activeCategory}` so each pill gets a fresh tree; legacy mode keeps a stable key.
  */
 export function useGame(category: string) {
   const [bootstrapped, setBootstrapped] = useState(false);
@@ -455,6 +479,18 @@ export function useGame(category: string) {
     let cancelled = false;
     const today = getLocalDateKey();
     migrateLegacyStorageIfPresent(today);
+
+    if (ENABLE_STRICT_CATEGORY_LOGIC) {
+      persistMirrorRef.current = {
+        gameState: "IDLE",
+        attemptsUsed: 0,
+        gameStatus: null,
+        slots: emptySlots(),
+        gameId: "",
+        previewUrl: "",
+        reveal: null,
+      };
+    }
 
     setSessionId(getOrCreateSessionId(today, category));
     setGuessError(null);
