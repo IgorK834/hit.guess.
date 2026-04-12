@@ -4,15 +4,19 @@ import logging
 import uuid
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Header, HTTPException, status
+from fastapi import APIRouter, Header, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.core.datetime_utils import calendar_today_in_zone
-from app.deps import DbSession, RedisClient
+from app.deps import DbSession, HttpClient, RedisClient, TidalAuth
 from app.models.daily_song import DailySong
 from app.models.leaderboard import LeaderboardEntry
+from app.services.daily_selector import (
+    DailyMusicCategory,
+    ensure_daily_song_for_category,
+)
 from app.services.game_guess_state import (
     apply_guess,
     game_state_redis_key,
@@ -23,6 +27,30 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["game"])
 
+# UI pill labels (exact match) → DB `daily_songs.category` slug.
+_UI_CATEGORY_TO_ENUM: dict[str, DailyMusicCategory] = {
+    "RAP": DailyMusicCategory.RAP,
+    "POPULARNE": DailyMusicCategory.POPULARNE,
+    "POP": DailyMusicCategory.POP,
+    "POLSKIE KLASYKI": DailyMusicCategory.POLSKIE_KLASYKI,
+    "KLASYKI ŚWIATA": DailyMusicCategory.KLASYKI_SWIAT,
+}
+
+
+def _parse_ui_category(raw: str | None) -> DailyMusicCategory:
+    if raw is None:
+        return DailyMusicCategory.POP
+    key = raw.strip()
+    if not key:
+        return DailyMusicCategory.POP
+    cat = _UI_CATEGORY_TO_ENUM.get(key)
+    if cat is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid category.",
+        )
+    return cat
+
 
 class DailyGameResponse(BaseModel):
     """Public daily round payload — no answer metadata before the round ends."""
@@ -32,14 +60,12 @@ class DailyGameResponse(BaseModel):
             "example": {
                 "game_id": "550e8400-e29b-41d4-a716-446655440000",
                 "preview_url": "https://example.com/preview.m3u8",
-                "difficulty_level": 1,
             }
         }
     )
 
     game_id: uuid.UUID = Field(description="Opaque id for this daily round (not the TIDAL track id).")
     preview_url: str
-    difficulty_level: int
 
 
 @router.get(
@@ -49,6 +75,12 @@ class DailyGameResponse(BaseModel):
 )
 async def get_daily_game(
     db: DbSession,
+    tidal_auth: TidalAuth,
+    http: HttpClient,
+    category: Annotated[
+        str | None,
+        Query(description="Category pill label, e.g. POP, RAP, POLSKIE KLASYKI."),
+    ] = None,
     x_client_timezone: Annotated[
         str | None,
         Header(
@@ -58,8 +90,29 @@ async def get_daily_game(
     ] = None,
 ) -> DailyGameResponse:
     today = calendar_today_in_zone(x_client_timezone)
-    result = await db.execute(select(DailySong).where(DailySong.target_date == today))
+    music_category = _parse_ui_category(category)
+    result = await db.execute(
+        select(DailySong).where(
+            DailySong.target_date == today,
+            DailySong.category == music_category.value,
+        ),
+    )
     row = result.scalar_one_or_none()
+    if row is None:
+        await ensure_daily_song_for_category(
+            db,
+            tidal_auth,
+            http,
+            target_date=today,
+            music_category=music_category,
+        )
+        result = await db.execute(
+            select(DailySong).where(
+                DailySong.target_date == today,
+                DailySong.category == music_category.value,
+            ),
+        )
+        row = result.scalar_one_or_none()
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -68,7 +121,6 @@ async def get_daily_game(
     return DailyGameResponse(
         game_id=row.internal_id,
         preview_url=row.preview_url,
-        difficulty_level=row.difficulty_level,
     )
 
 

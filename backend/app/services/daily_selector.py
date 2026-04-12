@@ -92,20 +92,20 @@ async def _collect_track_ids_for_category(
     )
 
 
-async def fetch_daily_candidate(
+async def fetch_daily_candidate_for_category(
+    category: DailyMusicCategory,
     auth: TidalAuthService,
     http: httpx.AsyncClient,
     *,
     excluded_track_ids: frozenset[str],
 ) -> DailyTrackCandidate | None:
-    """Return one random eligible track with a PREVIEW manifest, or None."""
+    """Return one eligible track for a fixed category with a PREVIEW manifest, or None."""
     try:
         token = await auth.get_access_token()
     except TidalAuthError:
         logger.exception("Daily selector could not obtain TIDAL access token")
         return None
 
-    category = random.choice(list(DailyMusicCategory))
     source = CATEGORY_POOL[category]
     track_ids = await _collect_track_ids_for_category(http, token, source)
     if not track_ids:
@@ -142,6 +142,22 @@ async def fetch_daily_candidate(
     return None
 
 
+async def fetch_daily_candidate(
+    auth: TidalAuthService,
+    http: httpx.AsyncClient,
+    *,
+    excluded_track_ids: frozenset[str],
+) -> DailyTrackCandidate | None:
+    """Return one random eligible track with a PREVIEW manifest, or None."""
+    category = random.choice(list(DailyMusicCategory))
+    return await fetch_daily_candidate_for_category(
+        category,
+        auth,
+        http,
+        excluded_track_ids=excluded_track_ids,
+    )
+
+
 async def _track_ids_in_last_days(
     session: AsyncSession,
     *,
@@ -155,36 +171,46 @@ async def _track_ids_in_last_days(
     return set(rows.all())
 
 
-async def run_daily_song_selection(
+async def ensure_daily_song_for_category(
     session: AsyncSession,
     auth: TidalAuthService,
     http: httpx.AsyncClient,
     *,
-    target_date: date | None = None,
+    target_date: date,
+    music_category: DailyMusicCategory,
     max_rounds: int = 48,
 ) -> bool:
     """
-    Ensure a `DailySong` row exists for `target_date` (the scheduler supplies the calendar day in its TZ).
-
-    Skips tracks that already appeared in the rolling **365-day** window ending on `target_date`, and skips
-    any TIDAL result whose preview manifest is not `PREVIEW`.
+    Ensure one `DailySong` row exists for (`target_date`, `music_category`).
 
     Returns True when a row exists after the call (created or already present).
     """
-    if target_date is None:
-        target_date = service_local_today()
-
-    existing = await session.scalar(select(DailySong).where(DailySong.target_date == target_date))
+    existing = await session.scalar(
+        select(DailySong).where(
+            DailySong.target_date == target_date,
+            DailySong.category == music_category.value,
+        ),
+    )
     if existing is not None:
         return True
 
+    inserted = False
     for round_idx in range(max_rounds):
         excluded = frozenset(
             await _track_ids_in_last_days(session, as_of=target_date, days=TRACK_REUSE_COOLDOWN_DAYS),
         )
-        candidate = await fetch_daily_candidate(auth, http, excluded_track_ids=excluded)
+        candidate = await fetch_daily_candidate_for_category(
+            music_category,
+            auth,
+            http,
+            excluded_track_ids=excluded,
+        )
         if candidate is None:
-            logger.warning("Daily selection round %s produced no candidate", round_idx + 1)
+            logger.warning(
+                "Daily selection round %s category=%s produced no candidate",
+                round_idx + 1,
+                music_category.value,
+            )
             continue
 
         if candidate.tidal_track_id in excluded:
@@ -197,33 +223,78 @@ async def run_daily_song_selection(
             artist=candidate.artist,
             album_cover=candidate.album_cover,
             target_date=target_date,
+            category=music_category.value,
         )
         session.add(row)
         try:
             await session.commit()
             logger.info(
-                "Stored daily song for %s track=%s title=%r",
+                "Stored daily song for %s category=%s track=%s title=%r",
                 target_date.isoformat(),
+                music_category.value,
                 candidate.tidal_track_id,
                 candidate.title,
             )
-            return True
+            inserted = True
+            break
         except IntegrityError:
             await session.rollback()
             logger.info(
-                "Daily song insert raced or conflicted (target_date=%s track=%s); reloading state",
+                "Daily song insert raced (target_date=%s category=%s track=%s); reloading",
                 target_date.isoformat(),
+                music_category.value,
                 candidate.tidal_track_id,
             )
-            existing = await session.scalar(
-                select(DailySong).where(DailySong.target_date == target_date),
+            existing2 = await session.scalar(
+                select(DailySong).where(
+                    DailySong.target_date == target_date,
+                    DailySong.category == music_category.value,
+                ),
             )
-            if existing is not None:
-                return True
+            if existing2 is not None:
+                inserted = True
+                break
 
-    final = await session.scalar(select(DailySong).where(DailySong.target_date == target_date))
-    if final is not None:
-        return True
+    if not inserted:
+        logger.error(
+            "Failed to select daily song for %s category=%s after %s rounds",
+            target_date,
+            music_category.value,
+            max_rounds,
+        )
+        return False
+    return True
 
-    logger.error("Failed to select a daily song for %s after %s rounds", target_date, max_rounds)
-    return False
+
+async def run_daily_song_selection(
+    session: AsyncSession,
+    auth: TidalAuthService,
+    http: httpx.AsyncClient,
+    *,
+    target_date: date | None = None,
+    max_rounds: int = 48,
+) -> bool:
+    """
+    Ensure a `DailySong` row exists for each music category on `target_date` (scheduler TZ calendar day).
+
+    Skips tracks that already appeared in the rolling **365-day** window ending on `target_date`, and skips
+    any TIDAL result whose preview manifest is not `PREVIEW`.
+
+    Returns True when every category has a row after the call (or already had one).
+    """
+    if target_date is None:
+        target_date = service_local_today()
+
+    all_ok = True
+    for music_category in DailyMusicCategory:
+        ok = await ensure_daily_song_for_category(
+            session,
+            auth,
+            http,
+            target_date=target_date,
+            music_category=music_category,
+            max_rounds=max_rounds,
+        )
+        all_ok = all_ok and ok
+
+    return all_ok
