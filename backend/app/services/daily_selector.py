@@ -171,6 +171,48 @@ async def _track_ids_in_last_days(
     return set(rows.all())
 
 
+async def _track_ids_used_on_calendar_date(
+    session: AsyncSession,
+    *,
+    target_date: date,
+) -> set[str]:
+    """All picks on this calendar day (every category)."""
+    rows = await session.scalars(
+        select(DailySong.tidal_track_id).where(DailySong.target_date == target_date),
+    )
+    return set(rows.all())
+
+
+async def _track_ids_in_last_days_same_category(
+    session: AsyncSession,
+    *,
+    as_of: date,
+    music_category: DailyMusicCategory,
+    days: int = TRACK_REUSE_COOLDOWN_DAYS,
+) -> set[str]:
+    """Rolling window, **this category only** — legacy behaviour allows the same track in two categories."""
+    start = as_of - timedelta(days=days)
+    rows = await session.scalars(
+        select(DailySong.tidal_track_id).where(
+            DailySong.target_date >= start,
+            DailySong.category == music_category.value,
+        ),
+    )
+    return set(rows.all())
+
+
+async def _track_ids_used_by_other_categories(
+    session: AsyncSession,
+    *,
+    music_category: DailyMusicCategory,
+) -> set[str]:
+    """Any `tidal_track_id` already assigned to a different music category (any date)."""
+    rows = await session.scalars(
+        select(DailySong.tidal_track_id).where(DailySong.category != music_category.value),
+    )
+    return set(rows.all())
+
+
 async def ensure_daily_song_for_category(
     session: AsyncSession,
     auth: TidalAuthService,
@@ -182,6 +224,8 @@ async def ensure_daily_song_for_category(
 ) -> bool:
     """
     Ensure one `DailySong` row exists for (`target_date`, `music_category`).
+
+    Exclusion rules depend on `settings.strict_category_logic` (see `STRICT_CATEGORY_LOGIC` env).
 
     Returns True when a row exists after the call (created or already present).
     """
@@ -196,9 +240,29 @@ async def ensure_daily_song_for_category(
 
     inserted = False
     for round_idx in range(max_rounds):
-        excluded = frozenset(
-            await _track_ids_in_last_days(session, as_of=target_date, days=TRACK_REUSE_COOLDOWN_DAYS),
-        )
+        if settings.strict_category_logic:
+            cooldown_ids = await _track_ids_in_last_days(
+                session,
+                as_of=target_date,
+                days=TRACK_REUSE_COOLDOWN_DAYS,
+            )
+            same_day_ids = await _track_ids_used_on_calendar_date(
+                session,
+                target_date=target_date,
+            )
+            other_category_ids = await _track_ids_used_by_other_categories(
+                session,
+                music_category=music_category,
+            )
+            excluded = frozenset(cooldown_ids | same_day_ids | other_category_ids)
+        else:
+            same_category_ids = await _track_ids_in_last_days_same_category(
+                session,
+                as_of=target_date,
+                music_category=music_category,
+                days=TRACK_REUSE_COOLDOWN_DAYS,
+            )
+            excluded = frozenset(same_category_ids)
         candidate = await fetch_daily_candidate_for_category(
             music_category,
             auth,
@@ -277,8 +341,8 @@ async def run_daily_song_selection(
     """
     Ensure a `DailySong` row exists for each music category on `target_date` (scheduler TZ calendar day).
 
-    Skips tracks that already appeared in the rolling **365-day** window ending on `target_date`, and skips
-    any TIDAL result whose preview manifest is not `PREVIEW`.
+    Skips tracks according to `settings.strict_category_logic` (global vs per-category window),
+    and skips any TIDAL result whose preview manifest is not `PREVIEW`.
 
     Returns True when every category has a row after the call (or already had one).
     """
