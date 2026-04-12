@@ -2,11 +2,8 @@
 
 import { useState } from "react";
 
-import { AudioPlayer } from "@/components/audio-player";
 import { CategoryPills } from "@/components/category-pills";
-import { SearchCombobox } from "@/components/search-combobox";
-import { GuessFields } from "@/components/guess-fields";
-import { useGame } from "@/hooks/use-game";
+import { GameCategoryPanel } from "@/components/game-category-panel";
 
 const CATEGORIES = [
   "RAP",
@@ -18,14 +15,6 @@ const CATEGORIES = [
 
 export default function Home() {
   const [category, setCategory] = useState("POP");
-  const g = useGame();
-
-  const busy = g.dailyLoading || g.guessSubmitting;
-  const canInteract =
-    !busy &&
-    !g.isFinished &&
-    (g.gameState === "PLAYING" || g.gameState === "PAUSED") &&
-    !!g.daily;
 
   return (
     <div className="relative flex h-[100dvh] max-h-[100dvh] flex-col overflow-hidden bg-[#EBE7DF] text-black">
@@ -76,7 +65,7 @@ export default function Home() {
           </div>
         </section>
 
-        <section className="mt-8 flex min-h-0 min-w-0 flex-1 flex-col border-black/10 md:mt-0 md:border-l md:pl-12">
+        <section className="relative mt-8 flex min-h-0 min-w-0 flex-1 flex-col border-black/10 md:mt-0 md:border-l md:pl-12">
           <div className="mb-4 shrink-0">
             <CategoryPills
               categories={CATEGORIES}
@@ -85,68 +74,7 @@ export default function Home() {
             />
           </div>
 
-          {g.loadError ? (
-            <div className="mb-3 shrink-0 border border-red-800/30 bg-red-50/90 p-3 text-[11px] font-bold uppercase leading-snug text-red-900">
-              {g.loadError}
-              <button
-                type="button"
-                onClick={() => void g.reloadDaily()}
-                className="ml-2 underline"
-                style={{ color: "#0000FF" }}
-              >
-                Spróbuj ponownie
-              </button>
-            </div>
-          ) : null}
-
-          <div className="mb-5 shrink-0">
-            <AudioPlayer
-              previewUrl={g.previewUrl ?? g.daily?.preview_url}
-              currentAttempt={g.attemptsUsed}
-              attemptEpoch={g.attemptsUsed}
-              disabled={g.dailyLoading || !canInteract}
-              onPlayingChange={(playing) => {
-                if (playing) g.startGame();
-                else g.pauseGame();
-              }}
-            />
-          </div>
-
-          <div className="mb-4 min-h-0 shrink-0">
-            <GuessFields slots={g.slots} activeIndex={g.activeSlotIndex} />
-          </div>
-
-          <div className="flex shrink-0 gap-2">
-            <SearchCombobox
-              disabled={!canInteract}
-              onTrackSelect={(t) => void g.submitPick(t)}
-            />
-            <button
-              type="button"
-              disabled={!canInteract}
-              onClick={() => void g.skip()}
-              className="h-9 shrink-0 px-5 text-[10px] font-black uppercase tracking-wider text-white transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-[#EBE7DF] disabled:cursor-not-allowed disabled:opacity-45"
-              style={{ backgroundColor: "#0000FF" }}
-            >
-              POMIŃ
-            </button>
-          </div>
-
-          {g.guessError ? (
-            <p className="mt-2 shrink-0 text-[10px] font-bold uppercase text-red-800">
-              {g.guessError}
-            </p>
-          ) : null}
-
-          <p className="mt-4 shrink-0 text-[9px] text-black/45">
-            Zgłoś błąd?{" "}
-            <button
-              type="button"
-              className="font-normal underline decoration-black/30 underline-offset-2"
-            >
-              [Konsola]
-            </button>
-          </p>
+          <GameCategoryPanel key={category} category={category} />
         </section>
       </div>
 
@@ -185,37 +113,6 @@ export default function Home() {
           </a>
         </div>
       </footer>
-
-      {g.isFinished && g.reveal ? (
-        <div className="absolute inset-0 z-40 flex items-center justify-center bg-[#EBE7DF]/95 px-4 backdrop-blur-[1px]">
-          <div className="w-full max-w-md border-2 border-black bg-[#EBE7DF] p-6 text-center shadow-[8px_8px_0_0_rgba(0,0,0,0.08)]">
-            <p className="text-xs font-black uppercase tracking-[0.2em]" style={{ color: "#0000FF" }}>
-              {g.gameStatus === "WON" ? "Wygrana" : "Koniec gry"}
-            </p>
-            <img
-              src={g.reveal.album_cover}
-              alt=""
-              className="mx-auto mt-4 h-40 w-40 border border-black/15 object-cover"
-              width={160}
-              height={160}
-            />
-            <h3 className="mt-4 text-lg font-black uppercase leading-tight text-black">
-              {g.reveal.title}
-            </h3>
-            <p className="mt-1 text-sm font-bold uppercase text-black/60">
-              {g.reveal.artist}
-            </p>
-            <button
-              type="button"
-              onClick={() => window.location.reload()}
-              className="mt-6 h-10 w-full text-xs font-black uppercase tracking-wider text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2"
-              style={{ backgroundColor: "#0000FF" }}
-            >
-              Zamknij
-            </button>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

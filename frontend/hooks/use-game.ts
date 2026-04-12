@@ -14,10 +14,24 @@ import {
 } from "@/lib/api";
 import { getLocalDateKey } from "@/lib/clientTimezone";
 
-/** Daily game snapshot persisted under {@link DAILY_STORAGE_KEY}. */
-export const DAILY_STORAGE_KEY = "hit_guess_daily_state";
+/** Legacy single-blob key (v2/v3) — migrated once into per-category keys. */
+export const LEGACY_DAILY_STORAGE_KEY = "hit_guess_daily_state";
 
-const PERSIST_VERSION = 2 as const;
+const PERSIST_VERSION = 5 as const;
+
+function categoryKeySuffix(category: string): string {
+  return category.trim().replace(/\s+/g, "_");
+}
+
+/** Per-category daily round snapshot: `hit_guess_daily_state_{date}_{category}`. */
+export function dailyStateStorageKey(date: string, category: string): string {
+  return `hit_guess_daily_state_${date}_${categoryKeySuffix(category)}`;
+}
+
+/** Per-category anonymous session (Redis / leaderboard isolation). */
+export function dailySessionStorageKey(date: string, category: string): string {
+  return `hit_guess_session_${date}_${categoryKeySuffix(category)}`;
+}
 
 export type GameState = "IDLE" | "PLAYING" | "PAUSED" | "LOCKED" | "FINISHED";
 
@@ -25,7 +39,6 @@ export const GUESS_DURATIONS_MS = [
   1000, 2000, 4000, 7000, 11000, 16000,
 ] as const;
 
-/** Segment caps in seconds — derived from {@link GUESS_DURATIONS_MS} for the audio UI. */
 export const AUDIO_SEGMENT_CAPS = GUESS_DURATIONS_MS.map((ms) => ms / 1000) as unknown as readonly [
   number,
   number,
@@ -48,8 +61,22 @@ export type GuessEntry =
   | { kind: "skip" }
   | { kind: "guess"; tidalId?: string; artist: string; title: string };
 
-type HitGuessDailyPersisted = {
+type HitGuessCategoryPersisted = {
   v: typeof PERSIST_VERSION;
+  date: string;
+  /** Pill label this blob belongs to — must match the active category or the snapshot is ignored. */
+  uiCategory: string;
+  gameState: GameState;
+  attemptsUsed: number;
+  gameStatus: GuessResponse["game_status"] | null;
+  slots: GuessSlot[];
+  gameId: string;
+  previewUrl: string;
+  reveal: TrackDetails | null;
+};
+
+type LegacyV2 = {
+  v: 2;
   date: string;
   sessionId: string;
   gameState: GameState;
@@ -58,9 +85,17 @@ type HitGuessDailyPersisted = {
   gameStatus: GuessResponse["game_status"] | null;
   gameId: string;
   previewUrl: string;
-  difficulty_level: number;
   reveal: TrackDetails | null;
 };
+
+type LegacyV3 = {
+  v: 3;
+  date: string;
+  sessionId: string;
+  byCategory: Record<string, unknown>;
+};
+
+let legacyMigratedGlobal = false;
 
 function emptySlots(): GuessSlot[] {
   return Array.from({ length: MAX_ATTEMPTS }, () => ({
@@ -94,9 +129,20 @@ function slotsToGuesses(slots: GuessSlot[]): GuessEntry[] {
   });
 }
 
-function normalizePersistedGameState(gs: GameState): GameState {
+const VALID_GAME_STATES: readonly GameState[] = [
+  "IDLE",
+  "PLAYING",
+  "PAUSED",
+  "LOCKED",
+  "FINISHED",
+];
+
+function normalizePersistedGameState(gs: unknown): GameState {
   if (gs === "LOCKED") return "PLAYING";
-  return gs;
+  if (typeof gs === "string" && VALID_GAME_STATES.includes(gs as GameState)) {
+    return gs as GameState;
+  }
+  return "PLAYING";
 }
 
 function isTerminalStatus(
@@ -105,27 +151,227 @@ function isTerminalStatus(
   return s === "WON" || s === "LOST";
 }
 
-function readPersisted(): HitGuessDailyPersisted | null {
+function isValidPersistCore(x: unknown): x is Omit<
+  HitGuessCategoryPersisted,
+  "v" | "date" | "uiCategory"
+> {
+  if (!x || typeof x !== "object") return false;
+  const o = x as Record<string, unknown>;
+  return (
+    typeof o.gameId === "string" &&
+    typeof o.previewUrl === "string" &&
+    typeof o.attemptsUsed === "number" &&
+    Array.isArray(o.slots)
+  );
+}
+
+function readCategoryPersisted(
+  date: string,
+  category: string,
+): HitGuessCategoryPersisted | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = window.localStorage.getItem(DAILY_STORAGE_KEY);
+    const raw = window.localStorage.getItem(dailyStateStorageKey(date, category));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as unknown;
     if (!parsed || typeof parsed !== "object") return null;
     const o = parsed as Record<string, unknown>;
-    if (o.v !== PERSIST_VERSION || typeof o.date !== "string") return null;
-    if (typeof o.sessionId !== "string") return null;
-    if (typeof o.gameId !== "string" || typeof o.previewUrl !== "string")
+    if (o.date !== date) return null;
+
+    if (o.v === 4 && isValidPersistCore(o)) {
+      const upgraded: HitGuessCategoryPersisted = {
+        v: PERSIST_VERSION,
+        date,
+        uiCategory: category,
+        gameState: normalizePersistedGameState(o.gameState),
+        attemptsUsed: o.attemptsUsed as number,
+        gameStatus: (o.gameStatus ?? null) as GuessResponse["game_status"] | null,
+        slots: Array.isArray(o.slots) && o.slots.length === MAX_ATTEMPTS
+          ? (o.slots as GuessSlot[])
+          : emptySlots(),
+        gameId: o.gameId as string,
+        previewUrl: o.previewUrl as string,
+        reveal: (o.reveal ?? null) as TrackDetails | null,
+      };
+      if (upgraded.uiCategory !== category) return null;
+      return upgraded;
+    }
+
+    if (o.v !== PERSIST_VERSION) return null;
+    if (typeof o.uiCategory !== "string" || o.uiCategory !== category) {
       return null;
-    if (typeof o.attemptsUsed !== "number" || !Array.isArray(o.slots))
-      return null;
-    return o as unknown as HitGuessDailyPersisted;
+    }
+    if (!isValidPersistCore(o)) return null;
+    return o as unknown as HitGuessCategoryPersisted;
   } catch {
     return null;
   }
 }
 
-export function useGame() {
+function writeCategoryPersisted(date: string, body: HitGuessCategoryPersisted) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      dailyStateStorageKey(date, body.uiCategory),
+      JSON.stringify(body),
+    );
+  } catch {
+    /* quota / private mode */
+  }
+}
+
+function removeCategoryPersisted(date: string, category: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(dailyStateStorageKey(date, category));
+  } catch {
+    /* ignore */
+  }
+}
+
+function getOrCreateSessionId(date: string, category: string): string {
+  if (typeof window === "undefined") return "";
+  const k = dailySessionStorageKey(date, category);
+  try {
+    let s = window.localStorage.getItem(k);
+    if (!s) {
+      s = crypto.randomUUID();
+      window.localStorage.setItem(k, s);
+    }
+    return s;
+  } catch {
+    return crypto.randomUUID();
+  }
+}
+
+function resetSessionId(date: string, category: string): string {
+  if (typeof window === "undefined") return crypto.randomUUID();
+  const s = crypto.randomUUID();
+  try {
+    window.localStorage.setItem(dailySessionStorageKey(date, category), s);
+  } catch {
+    /* ignore */
+  }
+  return s;
+}
+
+function sliceToPersist(
+  date: string,
+  uiCategory: string,
+  slice: {
+    gameState: GameState;
+    attemptsUsed: number;
+    gameStatus: GuessResponse["game_status"] | null;
+    slots: GuessSlot[];
+    gameId: string;
+    previewUrl: string;
+    reveal: TrackDetails | null;
+  },
+): HitGuessCategoryPersisted {
+  return {
+    v: PERSIST_VERSION,
+    date,
+    uiCategory,
+    gameState: slice.gameState === "LOCKED" ? "PLAYING" : slice.gameState,
+    attemptsUsed: slice.attemptsUsed,
+    gameStatus: slice.gameStatus,
+    slots: slice.slots,
+    gameId: slice.gameId,
+    previewUrl: slice.previewUrl,
+    reveal: slice.reveal,
+  };
+}
+
+function migrateLegacyStorageIfPresent(today: string): void {
+  if (typeof window === "undefined" || legacyMigratedGlobal) return;
+  legacyMigratedGlobal = true;
+  try {
+    const raw = window.localStorage.getItem(LEGACY_DAILY_STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return;
+    const o = parsed as Record<string, unknown>;
+    const date = o.date;
+    if (typeof date !== "string" || date !== today) {
+      window.localStorage.removeItem(LEGACY_DAILY_STORAGE_KEY);
+      return;
+    }
+
+    if (o.v === 2) {
+      const v2 = o as unknown as LegacyV2;
+      if (
+        typeof v2.gameId === "string" &&
+        typeof v2.previewUrl === "string"
+      ) {
+        const sid = typeof v2.sessionId === "string" ? v2.sessionId : crypto.randomUUID();
+        window.localStorage.setItem(dailySessionStorageKey(today, "POP"), sid);
+        writeCategoryPersisted(
+          today,
+          sliceToPersist(today, "POP", {
+            gameState: normalizePersistedGameState(v2.gameState),
+            attemptsUsed: v2.attemptsUsed,
+            gameStatus: v2.gameStatus,
+            slots:
+              v2.slots.length === MAX_ATTEMPTS ? v2.slots : emptySlots(),
+            gameId: v2.gameId,
+            previewUrl: v2.previewUrl,
+            reveal: v2.reveal,
+          }),
+        );
+      }
+      window.localStorage.removeItem(LEGACY_DAILY_STORAGE_KEY);
+      return;
+    }
+
+    if (o.v === 3) {
+      const v3 = o as unknown as LegacyV3;
+      if (typeof v3.sessionId === "string" && v3.byCategory && typeof v3.byCategory === "object") {
+        for (const [cat, rawSlice] of Object.entries(v3.byCategory)) {
+          if (!isValidPersistCore(rawSlice)) continue;
+          const s = rawSlice as Record<string, unknown>;
+          window.localStorage.setItem(
+            dailySessionStorageKey(today, cat),
+            v3.sessionId,
+          );
+          writeCategoryPersisted(
+            today,
+            sliceToPersist(today, cat, {
+              gameState: normalizePersistedGameState(s.gameState),
+              attemptsUsed: s.attemptsUsed as number,
+              gameStatus: (s.gameStatus ?? null) as GuessResponse["game_status"] | null,
+              slots:
+                Array.isArray(s.slots) && s.slots.length === MAX_ATTEMPTS
+                  ? (s.slots as GuessSlot[])
+                  : emptySlots(),
+              gameId: s.gameId as string,
+              previewUrl: s.previewUrl as string,
+              reveal: (s.reveal ?? null) as TrackDetails | null,
+            }),
+          );
+        }
+      }
+      window.localStorage.removeItem(LEGACY_DAILY_STORAGE_KEY);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+type PersistMirror = {
+  gameState: GameState;
+  attemptsUsed: number;
+  gameStatus: GuessResponse["game_status"] | null;
+  slots: GuessSlot[];
+  gameId: string;
+  previewUrl: string;
+  reveal: TrackDetails | null;
+};
+
+/**
+ * Game hook for **one** category. Parent should remount with `key={category}` so each pill
+ * gets a fresh React tree — no shared state bleed between categories.
+ */
+export function useGame(category: string) {
   const [bootstrapped, setBootstrapped] = useState(false);
 
   const [sessionId, setSessionId] = useState("");
@@ -139,18 +385,34 @@ export function useGame() {
 
   const [gameId, setGameId] = useState("");
   const [previewUrl, setPreviewUrl] = useState("");
-  const [difficultyLevel, setDifficultyLevel] = useState(0);
 
   const [dailyLoading, setDailyLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [guessError, setGuessError] = useState<string | null>(null);
 
-  const bootstrapOnce = useRef(false);
+  const persistMirrorRef = useRef<PersistMirror>({
+    gameState: "IDLE",
+    attemptsUsed: 0,
+    gameStatus: null,
+    slots: emptySlots(),
+    gameId: "",
+    previewUrl: "",
+    reveal: null,
+  });
+
+  persistMirrorRef.current = {
+    gameState,
+    attemptsUsed,
+    gameStatus,
+    slots,
+    gameId,
+    previewUrl,
+    reveal,
+  };
 
   const applyDailyPayload = useCallback((payload: DailyGamePayload) => {
     setGameId(payload.game_id);
     setPreviewUrl(payload.preview_url);
-    setDifficultyLevel(payload.difficulty_level);
   }, []);
 
   const applyGuessResponse = useCallback(
@@ -190,87 +452,64 @@ export function useGame() {
   );
 
   useEffect(() => {
-    if (bootstrapOnce.current) return;
-    bootstrapOnce.current = true;
-
     let cancelled = false;
     const today = getLocalDateKey();
+    migrateLegacyStorageIfPresent(today);
+
+    setSessionId(getOrCreateSessionId(today, category));
+    setGuessError(null);
+
+    const persisted = readCategoryPersisted(today, category);
+
+    if (persisted) {
+      const finished = isTerminalStatus(persisted.gameStatus);
+      setAttemptsUsed(persisted.attemptsUsed);
+      setGameStatus(persisted.gameStatus);
+      setSlots(
+        persisted.slots.length === MAX_ATTEMPTS
+          ? persisted.slots
+          : emptySlots(),
+      );
+      setReveal(persisted.reveal);
+      setGameId(persisted.gameId);
+      setPreviewUrl(persisted.previewUrl);
+      setGameState(
+        finished
+          ? "FINISHED"
+          : normalizePersistedGameState(persisted.gameState),
+      );
+      setLoadError(null);
+      setDailyLoading(false);
+      setBootstrapped(true);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setDailyLoading(true);
+    setLoadError(null);
 
     void (async () => {
-      const persisted = readPersisted();
-      const stale = !persisted || persisted.date !== today;
-
-      if (stale && typeof window !== "undefined") {
-        window.localStorage.removeItem(DAILY_STORAGE_KEY);
-      }
-
-      if (persisted && !stale) {
-        const finished = isTerminalStatus(persisted.gameStatus);
-        setSessionId(persisted.sessionId);
-        setAttemptsUsed(persisted.attemptsUsed);
-        setGameStatus(persisted.gameStatus);
-        setSlots(
-          persisted.slots.length === MAX_ATTEMPTS
-            ? persisted.slots
-            : emptySlots(),
-        );
-        setReveal(persisted.reveal);
-        setGameId(persisted.gameId);
-        setPreviewUrl(persisted.previewUrl);
-        setDifficultyLevel(persisted.difficulty_level);
-        setGameState(
-          finished
-            ? "FINISHED"
-            : normalizePersistedGameState(persisted.gameState),
-        );
-
-        if (finished) {
-          if (!cancelled) {
-            setLoadError(null);
-            setDailyLoading(false);
-            setBootstrapped(true);
-          }
-          return;
-        }
-      } else {
-        setSessionId(crypto.randomUUID());
-      }
-
-      setDailyLoading(true);
-      setLoadError(null);
-
       try {
-        const payload = await fetchDailyGame();
+        const payload = await fetchDailyGame(category);
         if (cancelled) return;
 
-        if (persisted && !stale && !isTerminalStatus(persisted.gameStatus)) {
-          if (payload.game_id !== persisted.gameId) {
-            setAttemptsUsed(0);
-            setGameStatus("PLAYING");
-            setSlots(emptySlots());
-            setReveal(null);
-            setGameState("PLAYING");
-          }
-        } else if (stale) {
-          setAttemptsUsed(0);
-          setGameStatus("PLAYING");
-          setSlots(emptySlots());
-          setReveal(null);
-          setGameState("PLAYING");
-        }
-
-        applyDailyPayload(payload);
+        setAttemptsUsed(0);
+        setGameStatus("PLAYING");
+        setSlots(emptySlots());
+        setReveal(null);
+        setGameState("PLAYING");
+        setGameId(payload.game_id);
+        setPreviewUrl(payload.preview_url);
         setLoadError(null);
       } catch (e) {
         if (cancelled) return;
         const msg =
           e instanceof ApiError ? e.message : "Could not load today's game.";
         setLoadError(msg);
-        if (stale || !persisted) {
-          setGameId("");
-          setPreviewUrl("");
-          setGameState("IDLE");
-        }
+        setGameId("");
+        setPreviewUrl("");
+        setGameState("IDLE");
       } finally {
         if (!cancelled) {
           setDailyLoading(false);
@@ -282,40 +521,39 @@ export function useGame() {
     return () => {
       cancelled = true;
     };
-  }, [applyDailyPayload]);
+  }, [category]);
 
   useEffect(() => {
-    if (typeof window === "undefined" || !bootstrapped || !gameId) return;
-
-    const toSave: HitGuessDailyPersisted = {
-      v: PERSIST_VERSION,
-      date: getLocalDateKey(),
-      sessionId,
-      gameState: gameState === "LOCKED" ? "PLAYING" : gameState,
-      attemptsUsed,
-      slots,
-      gameStatus,
-      gameId,
-      previewUrl,
-      difficulty_level: difficultyLevel,
-      reveal,
+    const today = getLocalDateKey();
+    const cat = category;
+    return () => {
+      const m = persistMirrorRef.current;
+      if (!m.gameId.trim()) return;
+      writeCategoryPersisted(
+        today,
+        sliceToPersist(today, cat, m),
+      );
     };
+  }, [category]);
 
-    try {
-      window.localStorage.setItem(DAILY_STORAGE_KEY, JSON.stringify(toSave));
-    } catch {
-      /* quota / private mode */
+  useEffect(() => {
+    if (typeof window === "undefined" || !bootstrapped || !gameId.trim()) {
+      return;
     }
+    const today = getLocalDateKey();
+    writeCategoryPersisted(
+      today,
+      sliceToPersist(today, category, persistMirrorRef.current),
+    );
   }, [
     bootstrapped,
-    sessionId,
+    category,
     gameState,
     attemptsUsed,
     slots,
     gameStatus,
     gameId,
     previewUrl,
-    difficultyLevel,
     reveal,
   ]);
 
@@ -334,13 +572,14 @@ export function useGame() {
   const guessSubmitting = gameState === "LOCKED";
 
   const daily = useMemo((): DailyGamePayload | null => {
-    if (!gameId || !previewUrl) return null;
+    const gid = gameId.trim();
+    const p = previewUrl.trim();
+    if (!gid || !p) return null;
     return {
-      game_id: gameId,
-      preview_url: previewUrl,
-      difficulty_level: difficultyLevel,
+      game_id: gid,
+      preview_url: p,
     };
-  }, [gameId, previewUrl, difficultyLevel]);
+  }, [gameId, previewUrl]);
 
   const startGame = useCallback(() => {
     setGameState((s) => {
@@ -356,12 +595,12 @@ export function useGame() {
   const reloadDaily = useCallback(async () => {
     setDailyLoading(true);
     setLoadError(null);
+    const today = getLocalDateKey();
     try {
-      if (typeof window !== "undefined") {
-        window.localStorage.removeItem(DAILY_STORAGE_KEY);
-      }
-      const payload = await fetchDailyGame();
-      setSessionId(crypto.randomUUID());
+      removeCategoryPersisted(today, category);
+      const newSid = resetSessionId(today, category);
+      setSessionId(newSid);
+      const payload = await fetchDailyGame(category);
       applyDailyPayload(payload);
       setAttemptsUsed(0);
       setGameStatus("PLAYING");
@@ -379,7 +618,7 @@ export function useGame() {
     } finally {
       setDailyLoading(false);
     }
-  }, [applyDailyPayload]);
+  }, [category, applyDailyPayload]);
 
   const submitGuess = useCallback(
     async (trackId: string) => {
@@ -448,7 +687,8 @@ export function useGame() {
       });
       applyGuessResponse(res, "POMINIĘTO", "skip");
     } catch (e) {
-      const msg = e instanceof ApiError ? e.message : "Skip could not be sent.";
+      const msg =
+        e instanceof ApiError ? e.message : "Skip could not be sent.";
       setGuessError(msg);
       setGameState((prev) => (prev === "FINISHED" ? prev : "PLAYING"));
     }

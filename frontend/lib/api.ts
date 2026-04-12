@@ -10,7 +10,6 @@ export function getApiBaseUrl(): string {
 export type DailyGamePayload = {
   game_id: string;
   preview_url: string;
-  difficulty_level: number;
 };
 
 export type SearchTrackResult = {
@@ -60,8 +59,21 @@ async function parseJson<T>(res: Response): Promise<T> {
   }
 }
 
-export async function fetchDailyGame(): Promise<DailyGamePayload> {
-  const res = await fetch(`${getApiBaseUrl()}/api/v1/game/daily`, {
+export async function fetchDailyGame(
+  category?: string,
+): Promise<DailyGamePayload> {
+  const q = new URLSearchParams();
+  if (category?.trim()) {
+    q.set("category", category.trim());
+  }
+  // Defeat intermediaries that ignore Vary — each category must hit origin.
+  q.set("_nc", `${category ?? ""}:${Date.now()}`);
+  const qs = q.toString();
+  const path =
+    qs.length > 0
+      ? `${getApiBaseUrl()}/api/v1/game/daily?${qs}`
+      : `${getApiBaseUrl()}/api/v1/game/daily`;
+  const res = await fetch(path, {
     method: "GET",
     headers: {
       Accept: "application/json",
