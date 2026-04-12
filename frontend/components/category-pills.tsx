@@ -1,5 +1,7 @@
 "use client";
 
+const ACCENT = "#0000FF";
+
 type CategoryPillsProps = {
   categories: readonly string[];
   selected: string;
@@ -17,11 +19,17 @@ export function CategoryPills({ categories, selected, onSelect }: CategoryPillsP
             type="button"
             onClick={() => onSelect(category)}
             className={[
-              "rounded-full border px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider transition-colors",
+              "rounded-full border-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider transition-colors",
+              "focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-[#EBE7DF]",
               isOn
-                ? "border-black bg-black text-white"
+                ? "text-white"
                 : "border-black/25 bg-transparent text-black hover:border-black/50",
             ].join(" ")}
+            style={
+              isOn
+                ? { borderColor: ACCENT, backgroundColor: ACCENT }
+                : { borderColor: "rgba(0,0,0,0.25)" }
+            }
           >
             {category}
           </button>
