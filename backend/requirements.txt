@@ -12,6 +12,7 @@ redis>=5.2.0,<6
 
 # Settings
 pydantic-settings>=2.6.0,<3
+python-dotenv>=1.0.0,<2
 
 # HTTP client (TIDAL API)
 httpx>=0.28.0,<1
