@@ -44,13 +44,23 @@ class Settings(BaseSettings):
         validation_alias="TIDAL_COUNTRY_CODE",
     )
     tidal_placeholder_cover_url: str = Field(
-        default="https://tidal.com/",
+        default="https://placehold.co/320x320/EBE7DF/000000/png?text=%E2%99%AA",
         validation_alias="TIDAL_PLACEHOLDER_COVER_URL",
     )
 
     scheduler_timezone: str = Field(
         default="Europe/Warsaw",
         validation_alias="SCHEDULER_TIMEZONE",
+    )
+
+    strict_category_logic: bool = Field(
+        default=False,
+        validation_alias="STRICT_CATEGORY_LOGIC",
+        description=(
+            "When true: daily picks exclude TIDAL tracks already used by other categories "
+            "(same calendar day + any prior use in another category). When false: only this "
+            "category's history in the rolling window is excluded (legacy behaviour)."
+        ),
     )
 
     # Comma-separated browser origins for CORS (required when frontend is on another host:port).
