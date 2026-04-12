@@ -1,4 +1,4 @@
-import { gameApiHeaders } from "@/lib/clientTimezone";
+import { gameApiHeaders, getLocalDateKey } from "@/lib/clientTimezone";
 
 const DEFAULT_API = "http://localhost:8000";
 
@@ -59,15 +59,43 @@ async function parseJson<T>(res: Response): Promise<T> {
   }
 }
 
+/** Prefer FastAPI `detail` (string or validation error list) for user-visible messages. */
+function messageFromFastApiBody(status: number, body: string): string {
+  try {
+    const parsed = JSON.parse(body) as { detail?: unknown };
+    if (parsed.detail === undefined) {
+      return `Request failed (${status})`;
+    }
+    const d = parsed.detail;
+    if (typeof d === "string") {
+      return d;
+    }
+    if (Array.isArray(d)) {
+      const parts = d.map((item) => {
+        if (item && typeof item === "object" && "msg" in item) {
+          return String((item as { msg: unknown }).msg);
+        }
+        return String(item);
+      });
+      const joined = parts.filter(Boolean).join("; ");
+      return joined || `Request failed (${status})`;
+    }
+    return String(d);
+  } catch {
+    return `Request failed (${status})`;
+  }
+}
+
 export async function fetchDailyGame(
   category?: string,
 ): Promise<DailyGamePayload> {
   const q = new URLSearchParams();
-  if (category?.trim()) {
-    q.set("category", category.trim());
+  const cat = category?.trim() ?? "";
+  if (cat) {
+    q.set("category", cat);
   }
-  // Defeat intermediaries that ignore Vary — each category must hit origin.
-  q.set("_nc", `${category ?? ""}:${Date.now()}`);
+  const dateKey = getLocalDateKey();
+  q.set("_nc", cat ? `${cat}:${dateKey}` : dateKey);
   const qs = q.toString();
   const path =
     qs.length > 0
@@ -83,7 +111,7 @@ export async function fetchDailyGame(
   });
   if (!res.ok) {
     const body = await res.text();
-    throw new ApiError(`Daily game failed (${res.status})`, res.status, body);
+    throw new ApiError(messageFromFastApiBody(res.status, body), res.status, body);
   }
   return parseJson<DailyGamePayload>(res);
 }
@@ -101,7 +129,7 @@ export async function searchTracks(query: string): Promise<SearchTrackResult[]> 
   }
   if (!res.ok) {
     const body = await res.text();
-    throw new ApiError(`Search failed (${res.status})`, res.status, body);
+    throw new ApiError(messageFromFastApiBody(res.status, body), res.status, body);
   }
   return parseJson<SearchTrackResult[]>(res);
 }
@@ -117,7 +145,7 @@ export async function submitGuess(payload: GuessPayload): Promise<GuessResponse>
   });
   if (!res.ok) {
     const body = await res.text();
-    throw new ApiError(`Guess failed (${res.status})`, res.status, body);
+    throw new ApiError(messageFromFastApiBody(res.status, body), res.status, body);
   }
   return parseJson<GuessResponse>(res);
 }
