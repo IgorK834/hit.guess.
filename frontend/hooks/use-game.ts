@@ -517,6 +517,20 @@ export function useGame(category: string) {
       setLoadError(null);
       setDailyLoading(false);
       setBootstrapped(true);
+      void (async () => {
+        try {
+          const payload = await fetchDailyGame(category);
+          if (cancelled) return;
+          const sameGame =
+            String(payload.game_id).trim() ===
+            String(persisted.gameId).trim();
+          if (sameGame && payload.preview_url) {
+            setPreviewUrl(payload.preview_url);
+          }
+        } catch {
+          /* keep persisted preview_url if /daily fails */
+        }
+      })();
       return () => {
         cancelled = true;
       };

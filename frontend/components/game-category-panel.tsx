@@ -3,8 +3,9 @@
 import { AudioPlayer } from "@/components/audio-player";
 import { GuessFields } from "@/components/guess-fields";
 import { SearchCombobox } from "@/components/search-combobox";
+import { useHitGuessDevConsole } from "@/hooks/use-hitguess-dev-console";
 import { useGame, wipeAllHitGuessLocalStorage } from "@/hooks/use-game";
-import { ENABLE_STRICT_CATEGORY_LOGIC } from "@/lib/feature-flags";
+import { ENABLE_DEV_MODE } from "@/lib/feature-flags";
 import { safeAlbumCoverSrc } from "@/lib/cover-url";
 
 type GameCategoryPanelProps = {
@@ -17,6 +18,8 @@ type GameCategoryPanelProps = {
  */
 export function GameCategoryPanel({ category }: GameCategoryPanelProps) {
   const g = useGame(category);
+
+  useHitGuessDevConsole(g.reloadDaily);
 
   const previewForAudio =
     (g.previewUrl ?? g.daily?.preview_url ?? "").trim() || "";
@@ -31,7 +34,7 @@ export function GameCategoryPanel({ category }: GameCategoryPanelProps) {
 
   return (
     <>
-      {ENABLE_STRICT_CATEGORY_LOGIC ? (
+      {ENABLE_DEV_MODE ? (
         <div className="fixed bottom-3 right-3 z-[60] flex flex-col gap-1">
           <button
             type="button"

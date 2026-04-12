@@ -11,6 +11,7 @@ import Hls from "hls.js";
 import { Pause, Play } from "lucide-react";
 
 import { AUDIO_SEGMENT_CAPS } from "@/hooks/use-game";
+import { proxiedTidalPreviewUrl } from "@/lib/preview-url";
 
 const TIMELINE_GAME_SECONDS = 16;
 const TIMELINE_WIN_SECONDS = 30;
@@ -153,6 +154,10 @@ export function AudioPlayer({
           // Worker fetch can break CORS on some CDN manifests; main-thread XHR is more predictable.
           enableWorker: false,
           lowLatencyMode: false,
+          // TIDAL does not send CORS headers; route every XHR through the API (backend must run).
+          xhrSetup: (xhr, url) => {
+            xhr.open("GET", proxiedTidalPreviewUrl(url), true);
+          },
         });
         hlsRef.current = hls;
         hls.loadSource(previewUrl);
@@ -164,9 +169,9 @@ export function AudioPlayer({
           }
         });
       } else if (hlsUrl && el.canPlayType("application/vnd.apple.mpegurl")) {
-        el.src = previewUrl;
+        el.src = proxiedTidalPreviewUrl(previewUrl);
       } else {
-        el.src = previewUrl;
+        el.src = proxiedTidalPreviewUrl(previewUrl);
       }
     };
 

@@ -1,11 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { CategoryPills } from "@/components/category-pills";
 import { GameCategoryPanel } from "@/components/game-category-panel";
-import { ENABLE_STRICT_CATEGORY_LOGIC } from "@/lib/feature-flags";
-import { wipeAllHitGuessLocalStorage } from "@/hooks/use-game";
 
 const CATEGORIES = [
   "RAP",
@@ -17,18 +15,6 @@ const CATEGORIES = [
 
 export default function Home() {
   const [activeCategory, setActiveCategory] = useState("POP");
-
-  useEffect(() => {
-    if (process.env.NODE_ENV !== "development") return;
-    const w = window as Window & { __hitguessWipe?: () => void };
-    w.__hitguessWipe = () => {
-      wipeAllHitGuessLocalStorage();
-      window.location.reload();
-    };
-    return () => {
-      delete w.__hitguessWipe;
-    };
-  }, []);
 
   return (
     <div className="relative flex h-[100dvh] max-h-[100dvh] flex-col overflow-hidden bg-[#EBE7DF] text-black">
@@ -88,14 +74,9 @@ export default function Home() {
             />
           </div>
 
-          <GameCategoryPanel
-            key={
-              ENABLE_STRICT_CATEGORY_LOGIC
-                ? activeCategory
-                : "hitguess-daily-game-panel"
-            }
-            category={activeCategory}
-          />
+          {/* key=category: jedna instancja useGame na kategorię. Stabilny key powodował
+              zapis stanu poprzedniej kategorii pod kluczem nowej (localStorage). */}
+          <GameCategoryPanel key={activeCategory} category={activeCategory} />
         </section>
       </div>
 
