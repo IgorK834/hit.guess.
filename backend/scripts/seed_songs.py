@@ -25,14 +25,16 @@ _BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(_BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(_BACKEND_ROOT))
 
-# Load env before `settings` is instantiated (repo root .env, then backend/.env wins).
+# Load env before `settings` is instantiated (root .env → backend/.env → backend/.env.local).
 from dotenv import load_dotenv  # noqa: E402
 
 _REPO_ROOT = _BACKEND_ROOT.parent
 if (_REPO_ROOT / ".env").is_file():
     load_dotenv(_REPO_ROOT / ".env", override=False)
 if (_BACKEND_ROOT / ".env").is_file():
-    load_dotenv(_BACKEND_ROOT / ".env", override=True)
+    load_dotenv(_BACKEND_ROOT / ".env", override=False)
+if (_BACKEND_ROOT / ".env.local").is_file():
+    load_dotenv(_BACKEND_ROOT / ".env.local", override=True)
 
 from app.core.config import settings  # noqa: E402
 from app.core.datetime_utils import service_local_today  # noqa: E402
@@ -52,14 +54,18 @@ def _exit_if_missing_tidal_credentials() -> None:
     sec_val = sec.get_secret_value().strip() if sec is not None else ""
     if cid and sec_val:
         return
-    paths = [_BACKEND_ROOT / ".env", _BACKEND_ROOT.parent / ".env"]
+    paths = [
+        _BACKEND_ROOT / ".env.local",
+        _BACKEND_ROOT / ".env",
+        _BACKEND_ROOT.parent / ".env",
+    ]
     msg = (
         "Missing TIDAL_CLIENT_ID and/or TIDAL_CLIENT_SECRET.\n\n"
-        "Add them to a .env file or export them in your shell.\n"
+        "Put secrets in backend/.env.local (gitignored) or export them in your shell.\n"
         "Register an app at: https://developer.tidal.com/dashboard\n\n"
-        "Checked for .env at:\n"
+        "Checked env files:\n"
         + "\n".join(f"  - {p}  ({'found' if p.is_file() else 'not found'})" for p in paths)
-        + "\n\nExample (backend/.env):\n"
+        + "\n\nExample (backend/.env.local):\n"
         "  TIDAL_CLIENT_ID=...\n"
         "  TIDAL_CLIENT_SECRET=...\n"
     )
@@ -176,7 +182,7 @@ async def collect_candidates(
         token = await auth.get_access_token()
     except TidalAuthError:
         logger.exception(
-            "TIDAL auth failed; set TIDAL_CLIENT_ID and TIDAL_CLIENT_SECRET in backend .env",
+            "TIDAL auth failed; set TIDAL_CLIENT_ID and TIDAL_CLIENT_SECRET in backend/.env.local",
         )
         return []
 

@@ -1,6 +1,6 @@
 """Uzupełnij `daily_songs` dla wszystkich kategorii — to samo co nocny cron.
 
-Uruchom z katalogu `backend` (z .env jak przy seedzie):
+Uruchom z katalogu `backend` (backend/.env + opcjonalnie backend/.env.local):
 
     python3 -m scripts.run_daily_selection
 
@@ -32,7 +32,9 @@ _REPO_ROOT = _BACKEND_ROOT.parent
 if (_REPO_ROOT / ".env").is_file():
     load_dotenv(_REPO_ROOT / ".env", override=False)
 if (_BACKEND_ROOT / ".env").is_file():
-    load_dotenv(_BACKEND_ROOT / ".env", override=True)
+    load_dotenv(_BACKEND_ROOT / ".env", override=False)
+if (_BACKEND_ROOT / ".env.local").is_file():
+    load_dotenv(_BACKEND_ROOT / ".env.local", override=True)
 
 from app.core.config import settings  # noqa: E402
 from app.core.datetime_utils import service_local_today  # noqa: E402
