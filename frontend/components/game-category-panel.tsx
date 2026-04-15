@@ -1,9 +1,10 @@
 "use client";
 
+import dynamic from "next/dynamic";
+
 import { AudioPlayer } from "@/components/audio-player";
 import { GuessFields } from "@/components/guess-fields";
 import { SearchCombobox } from "@/components/search-combobox";
-import { useHitGuessDevConsole } from "@/hooks/use-hitguess-dev-console";
 import { useGame, wipeAllHitGuessLocalStorage } from "@/hooks/use-game";
 import { ENABLE_DEV_MODE } from "@/lib/feature-flags";
 import { safeAlbumCoverSrc } from "@/lib/cover-url";
@@ -13,13 +14,18 @@ type GameCategoryPanelProps = {
   category: string;
 };
 
+const DevConsole = ENABLE_DEV_MODE
+  ? dynamic(
+      () => import("@/components/dev-console").then((m) => m.DevConsole),
+      { ssr: false },
+    )
+  : null;
+
 /**
  * With strict dev mode (`NEXT_PUBLIC_DEV_MODE=true`), parent remounts per category via `key`.
  */
 export function GameCategoryPanel({ category }: GameCategoryPanelProps) {
   const g = useGame(category);
-
-  useHitGuessDevConsole(g.reloadDaily);
 
   const previewForAudio =
     (g.previewUrl ?? g.daily?.preview_url ?? "").trim() || "";
@@ -34,28 +40,14 @@ export function GameCategoryPanel({ category }: GameCategoryPanelProps) {
 
   return (
     <>
-      {ENABLE_DEV_MODE ? (
-        <div className="fixed bottom-3 right-3 z-[60] flex flex-col gap-1">
-          <button
-            type="button"
-            className="border border-black/40 bg-[#EBE7DF] px-2 py-1 font-mono text-[8px] font-bold uppercase tracking-wide text-black shadow-sm hover:bg-black/5"
-            title="Usuwa stan i sesję tej kategorii z localStorage i ładuje dzisiejszą rundę od zera"
-            onClick={() => void g.reloadDaily()}
-          >
-            DEV: reset kategorii
-          </button>
-          <button
-            type="button"
-            className="border border-black/40 bg-[#EBE7DF] px-2 py-1 font-mono text-[8px] font-bold uppercase tracking-wide text-black shadow-sm hover:bg-black/5"
-            title="Usuwa WSZYSTKIE klucze hit_guess_* (wszystkie kategorie i daty), potem przeładowanie — jak świeża przeglądarka"
-            onClick={() => {
-              wipeAllHitGuessLocalStorage();
-              window.location.reload();
-            }}
-          >
-            DEV: czysty start (całość)
-          </button>
-        </div>
+      {DevConsole ? (
+        <DevConsole
+          category={category}
+          gameId={g.gameId}
+          previewUrl={g.previewUrl}
+          resetCategory={g.reloadDaily}
+          wipeAll={wipeAllHitGuessLocalStorage}
+        />
       ) : null}
       {g.loadError ? (
         <div className="mb-3 shrink-0 border border-red-800/30 bg-red-50/90 p-3 text-[11px] font-bold uppercase leading-snug text-red-900">
