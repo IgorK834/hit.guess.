@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import date
+from datetime import datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, status
@@ -105,6 +106,10 @@ async def get_daily_game(
         str | None,
         Query(description="Category pill label, e.g. POP, RAP, POLSKIE KLASYKI."),
     ] = None,
+    date_param: Annotated[
+        str | None,
+        Query(alias="date", description="Archive date override (YYYY-MM-DD)."),
+    ] = None,
     x_client_timezone: Annotated[
         str | None,
         Header(
@@ -114,16 +119,26 @@ async def get_daily_game(
     ] = None,
 ) -> DailyGameResponse:
     today = calendar_today_in_zone(x_client_timezone)
+    target_day = today
+    if date_param:
+        try:
+            parsed = datetime.strptime(date_param.strip(), "%Y-%m-%d").date()
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid date format (expected YYYY-MM-DD).",
+            ) from exc
+        target_day = parsed
     music_category = _parse_ui_category(category)
     result = await db.execute(
         select(DailySong).where(
-            DailySong.target_date == today,
+            DailySong.target_date == target_day,
             DailySong.category == music_category.value,
         ),
     )
     row = result.scalar_one_or_none()
     if row is None:
-        lock_key = f"lock:daily_song_generation:{today.isoformat()}:{music_category.value}"
+        lock_key = f"lock:daily_song_generation:{target_day.isoformat()}:{music_category.value}"
         lock = redis.lock(
             lock_key,
             timeout=_DAILY_GEN_LOCK_SEC,
@@ -132,7 +147,7 @@ async def get_daily_game(
         async with lock:
             result = await db.execute(
                 select(DailySong).where(
-                    DailySong.target_date == today,
+                    DailySong.target_date == target_day,
                     DailySong.category == music_category.value,
                 ),
             )
@@ -142,12 +157,12 @@ async def get_daily_game(
                     db,
                     tidal_auth,
                     http,
-                    target_date=today,
+                    target_date=target_day,
                     music_category=music_category,
                 )
                 result = await db.execute(
                     select(DailySong).where(
-                        DailySong.target_date == today,
+                        DailySong.target_date == target_day,
                         DailySong.category == music_category.value,
                     ),
                 )
@@ -155,7 +170,7 @@ async def get_daily_game(
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="No daily song configured for today.",
+            detail="No daily song configured for requested day.",
         )
     # Stored `preview_url` contains time-limited tokens; TIDAL returns 403 when they expire.
     preview_url = row.preview_url
