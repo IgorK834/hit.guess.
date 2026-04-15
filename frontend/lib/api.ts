@@ -1,9 +1,15 @@
 import { gameApiHeaders, getLocalDateKey } from "@/lib/clientTimezone";
 
-const DEFAULT_API = "http://localhost:8000";
+const DEV_DEFAULT_API = "http://localhost:8000";
 
 export function getApiBaseUrl(): string {
-  const base = process.env.NEXT_PUBLIC_API_URL ?? DEFAULT_API;
+  const isProd = process.env.NODE_ENV === "production";
+  const base = process.env.NEXT_PUBLIC_API_URL ?? (isProd ? "" : DEV_DEFAULT_API);
+  if (!base) {
+    throw new Error(
+      "Missing NEXT_PUBLIC_API_URL. Set it in Vercel project env vars (Production/Preview) or in `.env.local` for development.",
+    );
+  }
   return base.replace(/\/$/, "");
 }
 
