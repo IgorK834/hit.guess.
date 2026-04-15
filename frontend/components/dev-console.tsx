@@ -137,7 +137,7 @@ export function DevConsole(props: DevConsoleActions) {
                 {title}
               </div>
               <div className="mt-1 font-mono text-[10px] text-black/60">
-                Ctrl+Shift+D toggles
+                Ctrl+Shift+D przełącza
               </div>
             </div>
             <button
@@ -145,7 +145,7 @@ export function DevConsole(props: DevConsoleActions) {
               onClick={() => setOpen(false)}
               className="border border-black/20 bg-white/40 px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-wide text-black hover:bg-black/5"
             >
-              Close
+              Zamknij
             </button>
           </div>
 
@@ -164,7 +164,7 @@ export function DevConsole(props: DevConsoleActions) {
                   }}
                   className="border border-black/20 bg-[#EBE7DF] px-2 py-1 text-[9px] font-bold uppercase tracking-wide text-black disabled:opacity-40"
                 >
-                  {copied === "gameId" ? "Copied" : "Copy"}
+                  {copied === "gameId" ? "Skopiowano" : "Kopiuj"}
                 </button>
               </div>
               <div className="mt-1 break-all text-[10px]">
@@ -179,7 +179,7 @@ export function DevConsole(props: DevConsoleActions) {
                 className="border border-black/30 bg-[#EBE7DF] px-2 py-2 font-mono text-[9px] font-bold uppercase tracking-wide text-black hover:bg-black/5"
                 title="Clear this category state + reload /daily"
               >
-                Reset category
+                Reset kategorii
               </button>
               <button
                 type="button"
@@ -190,7 +190,7 @@ export function DevConsole(props: DevConsoleActions) {
                 className="border border-black/30 bg-[#EBE7DF] px-2 py-2 font-mono text-[9px] font-bold uppercase tracking-wide text-black hover:bg-black/5"
                 title="Wipe all hit_guess_* keys + reload"
               >
-                Wipe all
+                Wyczyść wszystko
               </button>
             </div>
 
@@ -201,7 +201,7 @@ export function DevConsole(props: DevConsoleActions) {
                 className="border border-black/30 bg-white/50 px-2 py-2 font-mono text-[9px] font-bold uppercase tracking-wide text-black hover:bg-black/5"
                 title="Force game end state"
               >
-                Force WON
+                Wymuś WYGRANĄ
               </button>
               <button
                 type="button"
@@ -209,7 +209,7 @@ export function DevConsole(props: DevConsoleActions) {
                 className="border border-black/30 bg-white/50 px-2 py-2 font-mono text-[9px] font-bold uppercase tracking-wide text-black hover:bg-black/5"
                 title="Force game end state"
               >
-                Force LOST
+                Wymuś PORAŻKĘ
               </button>
             </div>
 
@@ -220,7 +220,7 @@ export function DevConsole(props: DevConsoleActions) {
                 className="border border-black/30 bg-[#EBE7DF] px-2 py-2 font-mono text-[9px] font-bold uppercase tracking-wide text-black hover:bg-black/5"
                 title="4 wrong + 1 correct (mock UI)"
               >
-                Mock 4W+1C
+                Mock 4B+1P
               </button>
               <button
                 type="button"
@@ -228,13 +228,13 @@ export function DevConsole(props: DevConsoleActions) {
                 className="border border-black/30 bg-[#EBE7DF] px-2 py-2 font-mono text-[9px] font-bold uppercase tracking-wide text-black hover:bg-black/5"
                 title="6 wrong (mock UI)"
               >
-                Mock LOST
+                Mock PORAŻKA
               </button>
             </div>
           </div>
 
           <div className="mt-3 border-t border-black/10 pt-2 font-mono text-[9px] text-black/55">
-            This panel is gated by{" "}
+            Panel jest włączany przez{" "}
             <span className="font-bold">NEXT_PUBLIC_ENABLE_DEV_MODE</span>.
           </div>
         </div>
