@@ -1,6 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
+import { usePathname, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 
 import { CategoryPills } from "@/components/category-pills";
 import { GameCategoryPanel } from "@/components/game-category-panel";
@@ -14,22 +16,42 @@ const CATEGORIES = [
 ] as const;
 
 export default function Home() {
-  const [activeCategory, setActiveCategory] = useState("POP");
+  const pathname = usePathname();
+  const sp = useSearchParams();
+
+  const urlCategory = (sp.get("category") ?? "").trim();
+  const urlDate = (sp.get("date") ?? "").trim();
+
+  const initialCategory = useMemo(() => {
+    return (CATEGORIES as readonly string[]).includes(urlCategory) ? urlCategory : "POP";
+  }, [urlCategory]);
+
+  const [activeCategory, setActiveCategory] = useState<string>(initialCategory);
+
+  useEffect(() => {
+    setActiveCategory(initialCategory);
+  }, [initialCategory]);
 
   return (
     <div className="relative flex h-[100dvh] max-h-[100dvh] flex-col overflow-hidden bg-[#EBE7DF] text-black">
       <header className="flex shrink-0 items-center justify-between border-b border-black/10 px-6 py-4 md:px-10">
-        <h1 className="text-lg font-black uppercase tracking-tight md:text-xl">
+        <Link href="/" className="text-lg font-black uppercase tracking-tight md:text-xl">
           HIT.GUESS.
-        </h1>
+        </Link>
         <div className="flex items-center gap-6 md:gap-8">
           <nav className="hidden items-center gap-4 text-xs font-normal sm:flex">
-            <a href="#" className="text-black hover:underline hover:underline-offset-2">
+            <Link
+              href="/"
+              className={pathname === "/" ? "text-black underline underline-offset-2" : "text-black hover:underline hover:underline-offset-2"}
+            >
               Graj Teraz
-            </a>
-            <a href="#" className="text-black hover:underline hover:underline-offset-2">
-              Ranking
-            </a>
+            </Link>
+            <Link
+              href="/calendar"
+              className={pathname === "/calendar" ? "text-black underline underline-offset-2" : "text-black hover:underline hover:underline-offset-2"}
+            >
+              Kalendarz
+            </Link>
             <a href="#" className="text-black hover:underline hover:underline-offset-2">
               O grze
             </a>
@@ -76,7 +98,7 @@ export default function Home() {
 
           {/* key=category: jedna instancja useGame na kategorię. Stabilny key powodował
               zapis stanu poprzedniej kategorii pod kluczem nowej (localStorage). */}
-          <GameCategoryPanel key={activeCategory} category={activeCategory} />
+          <GameCategoryPanel key={`${activeCategory}:${urlDate || "today"}`} category={activeCategory} date={urlDate || undefined} />
         </section>
       </div>
 

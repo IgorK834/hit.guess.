@@ -395,7 +395,11 @@ type PersistMirror = {
  * Game hook for **one** category. With `NEXT_PUBLIC_DEV_MODE=true`, parent should remount with
  * `key={activeCategory}` so each pill gets a fresh tree; legacy mode keeps a stable key.
  */
-export function useGame(category: string) {
+export function useGame(category: string, opts?: { date?: string }) {
+  const dateOverride = (opts?.date ?? "").trim();
+  const resolvedDateKey = useMemo(() => {
+    return dateOverride || getLocalDateKey();
+  }, [dateOverride]);
   const [bootstrapped, setBootstrapped] = useState(false);
 
   const [sessionId, setSessionId] = useState("");
@@ -477,7 +481,7 @@ export function useGame(category: string) {
 
   useEffect(() => {
     let cancelled = false;
-    const today = getLocalDateKey();
+    const today = resolvedDateKey;
     migrateLegacyStorageIfPresent(today);
 
     if (ENABLE_STRICT_CATEGORY_LOGIC) {
@@ -519,7 +523,7 @@ export function useGame(category: string) {
       setBootstrapped(true);
       void (async () => {
         try {
-          const payload = await fetchDailyGame(category);
+          const payload = await fetchDailyGame(category, today);
           if (cancelled) return;
           const sameGame =
             String(payload.game_id).trim() ===
@@ -541,7 +545,7 @@ export function useGame(category: string) {
 
     void (async () => {
       try {
-        const payload = await fetchDailyGame(category);
+        const payload = await fetchDailyGame(category, today);
         if (cancelled) return;
 
         setAttemptsUsed(0);
@@ -571,10 +575,10 @@ export function useGame(category: string) {
     return () => {
       cancelled = true;
     };
-  }, [category]);
+  }, [category, resolvedDateKey]);
 
   useEffect(() => {
-    const today = getLocalDateKey();
+    const today = resolvedDateKey;
     const cat = category;
     return () => {
       const m = persistMirrorRef.current;
@@ -584,13 +588,13 @@ export function useGame(category: string) {
         sliceToPersist(today, cat, m),
       );
     };
-  }, [category]);
+  }, [category, resolvedDateKey]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !bootstrapped || !gameId.trim()) {
       return;
     }
-    const today = getLocalDateKey();
+    const today = resolvedDateKey;
     writeCategoryPersisted(
       today,
       sliceToPersist(today, category, persistMirrorRef.current),
@@ -605,6 +609,7 @@ export function useGame(category: string) {
     gameId,
     previewUrl,
     reveal,
+    resolvedDateKey,
   ]);
 
   const currentAttempt = Math.min(
@@ -645,12 +650,12 @@ export function useGame(category: string) {
   const reloadDaily = useCallback(async () => {
     setDailyLoading(true);
     setLoadError(null);
-    const today = getLocalDateKey();
+    const today = resolvedDateKey;
     try {
       removeCategoryPersisted(today, category);
       const newSid = resetSessionId(today, category);
       setSessionId(newSid);
-      const payload = await fetchDailyGame(category);
+      const payload = await fetchDailyGame(category, today);
       applyDailyPayload(payload);
       setAttemptsUsed(0);
       setGameStatus("PLAYING");
@@ -668,7 +673,7 @@ export function useGame(category: string) {
     } finally {
       setDailyLoading(false);
     }
-  }, [category, applyDailyPayload]);
+  }, [category, applyDailyPayload, resolvedDateKey]);
 
   const submitGuess = useCallback(
     async (trackId: string) => {

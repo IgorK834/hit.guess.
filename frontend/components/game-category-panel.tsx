@@ -13,6 +13,8 @@ import { ENABLE_DEV_MODE } from "@/lib/feature-flags";
 type GameCategoryPanelProps = {
   /** Pill label — must match `GET /daily?category=` and localStorage scope. */
   category: string;
+  /** Optional archive date (YYYY-MM-DD). */
+  date?: string;
 };
 
 const DevConsole = ENABLE_DEV_MODE
@@ -25,8 +27,8 @@ const DevConsole = ENABLE_DEV_MODE
 /**
  * With strict dev mode (`NEXT_PUBLIC_DEV_MODE=true`), parent remounts per category via `key`.
  */
-export function GameCategoryPanel({ category }: GameCategoryPanelProps) {
-  const g = useGame(category);
+export function GameCategoryPanel({ category, date }: GameCategoryPanelProps) {
+  const g = useGame(category, { date });
   const [resultOpen, setResultOpen] = useState(false);
 
   useEffect(() => {

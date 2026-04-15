@@ -94,13 +94,18 @@ function messageFromFastApiBody(status: number, body: string): string {
 
 export async function fetchDailyGame(
   category?: string,
+  date?: string,
 ): Promise<DailyGamePayload> {
   const q = new URLSearchParams();
   const cat = category?.trim() ?? "";
   if (cat) {
     q.set("category", cat);
   }
-  const dateKey = getLocalDateKey();
+  const requestedDate = (date ?? "").trim();
+  if (requestedDate) {
+    q.set("date", requestedDate);
+  }
+  const dateKey = requestedDate || getLocalDateKey();
   q.set("_nc", cat ? `${cat}:${dateKey}` : dateKey);
   const qs = q.toString();
   const path =
