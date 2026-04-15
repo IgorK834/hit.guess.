@@ -24,7 +24,8 @@ from app.services.game_guess_state import (
     score_for_win,
 )
 from app.services.tidal_auth import TidalAuthError
-from app.services.tidal_openapi import fetch_preview_manifest_uri
+from app.core.config import settings
+from app.services.tidal_openapi import fetch_preview_manifest_uri, fetch_track_display_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -214,6 +215,8 @@ async def submit_guess(
     body: GuessRequest,
     db: DbSession,
     redis: RedisClient,
+    tidal_auth: TidalAuth,
+    http: HttpClient,
 ) -> GuessResponse:
     result = await db.execute(select(DailySong).where(DailySong.internal_id == body.game_id))
     daily = result.scalar_one_or_none()
@@ -267,10 +270,28 @@ async def submit_guess(
 
     details: TrackDetails | None = None
     if gs.status in ("WON", "LOST"):
+        cover = daily.album_cover
+        # If daily seed stored a placeholder (or cover parsing failed), resolve cover art live.
+        # This does NOT reveal the answer early — it only runs for terminal rounds.
+        if cover == settings.tidal_placeholder_cover_url or "placehold.co" in (cover or ""):
+            try:
+                token = await tidal_auth.get_access_token()
+                meta = await fetch_track_display_metadata(
+                    http,
+                    token,
+                    daily.tidal_track_id,
+                    country_code=settings.tidal_country_code,
+                )
+                if meta is not None:
+                    _, _, resolved_cover = meta
+                    if resolved_cover and resolved_cover != settings.tidal_placeholder_cover_url:
+                        cover = resolved_cover
+            except Exception:
+                logger.debug("Could not resolve cover art for terminal round", exc_info=True)
         details = TrackDetails(
             title=daily.title,
             artist=daily.artist,
-            album_cover=daily.album_cover,
+            album_cover=cover,
         )
 
     assert gs.status in ("PLAYING", "WON", "LOST")

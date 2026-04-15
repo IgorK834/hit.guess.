@@ -423,43 +423,56 @@ async def _fetch_album_cover_url(
     best_href = ""
     best_area = -1
 
-    for item in payload.get("data") or []:
-        if not isinstance(item, dict):
+    def consider_cover_res(res: dict[str, Any]) -> None:
+        nonlocal best_href, best_area
+        files = _resource_attributes(res).get("files")
+        if not isinstance(files, list):
+            return
+        for fobj in files:
+            if not isinstance(fobj, dict):
+                continue
+            href = fobj.get("href")
+            meta = fobj.get("meta") if isinstance(fobj.get("meta"), dict) else {}
+            try:
+                w = int(meta.get("width") or 0)
+                h = int(meta.get("height") or 0)
+            except (TypeError, ValueError):
+                w, h = 0, 0
+            if isinstance(href, str) and href.strip():
+                area = w * h
+                if area > best_area:
+                    best_area = area
+                    best_href = _normalize_cover_href(href)
+
+    # TIDAL JSON:API relationship endpoints often return linkage in `data` and the actual
+    # coverArt resources in `included` (when `include=coverArt` is present).
+    # Prefer included payloads (works for both `coverArt` and `coverArts` resource types).
+    for inc in payload.get("included") or []:
+        if not isinstance(inc, dict):
             continue
-        rel = item.get("relationships") if isinstance(item.get("relationships"), dict) else {}
-        ca = rel.get("coverArt") if isinstance(rel.get("coverArt"), dict) else {}
-        cdata = ca.get("data")
-        refs: list[dict[str, Any]] = []
-        if isinstance(cdata, list):
-            refs = [x for x in cdata if isinstance(x, dict)]
-        elif isinstance(cdata, dict):
-            refs = [cdata]
-        for ref in refs:
-            cid = ref.get("id")
-            ctype = ref.get("type")
-            if not isinstance(cid, str):
-                continue
-            res = index.get((str(ctype), cid))
-            if not res:
-                continue
-            files = _resource_attributes(res).get("files")
-            if not isinstance(files, list):
-                continue
-            for fobj in files:
-                if not isinstance(fobj, dict):
-                    continue
-                href = fobj.get("href")
-                meta = fobj.get("meta") if isinstance(fobj.get("meta"), dict) else {}
-                try:
-                    w = int(meta.get("width") or 0)
-                    h = int(meta.get("height") or 0)
-                except (TypeError, ValueError):
-                    w, h = 0, 0
-                if isinstance(href, str) and href.strip():
-                    area = w * h
-                    if area > best_area:
-                        best_area = area
-                        best_href = _normalize_cover_href(href)
+        itype = inc.get("type")
+        if not isinstance(itype, str):
+            continue
+        if "cover" in itype.lower():
+            consider_cover_res(inc)
+
+    if best_href:
+        return best_href
+
+    # Fallback: try to resolve `data` identifiers into `included` via index.
+    data_root = payload.get("data")
+    refs: list[dict[str, Any]] = []
+    if isinstance(data_root, list):
+        refs = [x for x in data_root if isinstance(x, dict)]
+    elif isinstance(data_root, dict):
+        refs = [data_root]
+    for ref in refs:
+        rid = ref.get("id")
+        rtype = ref.get("type")
+        if isinstance(rid, str) and isinstance(rtype, str):
+            res = index.get((rtype, rid))
+            if res:
+                consider_cover_res(res)
 
     return best_href
 
