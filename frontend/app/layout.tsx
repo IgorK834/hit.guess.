@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+import { ToastProvider } from "@/hooks/use-toast";
+import { ToastProvider as RadixToastProvider } from "@/components/ui/toast";
+import { Toaster } from "@/components/ui/toaster";
 
 const inter = Inter({
   subsets: ["latin", "latin-ext"],
@@ -32,7 +35,12 @@ export default function RootLayout({
       <body
         className={`${inter.variable} ${jetbrainsMono.variable} min-h-0 bg-[#EBE7DF] font-sans antialiased`}
       >
-        {children}
+        <ToastProvider>
+          <RadixToastProvider swipeDirection="right">
+            {children}
+            <Toaster />
+          </RadixToastProvider>
+        </ToastProvider>
       </body>
     </html>
   );
