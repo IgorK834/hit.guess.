@@ -1,13 +1,14 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { useEffect, useState } from "react";
 
 import { AudioPlayer } from "@/components/audio-player";
 import { GuessFields } from "@/components/guess-fields";
+import { ResultModal } from "@/components/result-modal";
 import { SearchCombobox } from "@/components/search-combobox";
 import { useGame, wipeAllHitGuessLocalStorage } from "@/hooks/use-game";
 import { ENABLE_DEV_MODE } from "@/lib/feature-flags";
-import { safeAlbumCoverSrc } from "@/lib/cover-url";
 
 type GameCategoryPanelProps = {
   /** Pill label — must match `GET /daily?category=` and localStorage scope. */
@@ -26,6 +27,13 @@ const DevConsole = ENABLE_DEV_MODE
  */
 export function GameCategoryPanel({ category }: GameCategoryPanelProps) {
   const g = useGame(category);
+  const [resultOpen, setResultOpen] = useState(false);
+
+  useEffect(() => {
+    const shouldOpen =
+      g.isFinished && g.reveal && (g.gameStatus === "WON" || g.gameStatus === "LOST");
+    if (shouldOpen) setResultOpen(true);
+  }, [g.isFinished, g.gameStatus, g.reveal]);
 
   const previewForAudio =
     (g.previewUrl ?? g.daily?.preview_url ?? "").trim() || "";
@@ -47,6 +55,16 @@ export function GameCategoryPanel({ category }: GameCategoryPanelProps) {
           previewUrl={g.previewUrl}
           resetCategory={g.reloadDaily}
           wipeAll={wipeAllHitGuessLocalStorage}
+        />
+      ) : null}
+      {g.reveal && (g.gameStatus === "WON" || g.gameStatus === "LOST") ? (
+        <ResultModal
+          isOpen={resultOpen}
+          onClose={() => setResultOpen(false)}
+          category={category}
+          gameStatus={g.gameStatus}
+          slots={g.slots}
+          trackDetails={g.reveal}
         />
       ) : null}
       {g.loadError ? (
@@ -115,50 +133,6 @@ export function GameCategoryPanel({ category }: GameCategoryPanelProps) {
           [Konsola]
         </button>
       </p>
-
-      {g.isFinished && g.reveal ? (
-        <div className="absolute inset-0 z-40 flex items-center justify-center bg-[#EBE7DF]/95 px-4 backdrop-blur-[1px]">
-          <div className="w-full max-w-md border-2 border-black bg-[#EBE7DF] p-6 text-center shadow-[8px_8px_0_0_rgba(0,0,0,0.08)]">
-            <p
-              className="text-xs font-black uppercase tracking-[0.2em]"
-              style={{ color: "#0000FF" }}
-            >
-              {g.gameStatus === "WON" ? "Wygrana" : "Koniec gry"}
-            </p>
-            <p className="mt-2 text-[10px] font-bold uppercase text-black/55">
-              {category}
-            </p>
-            <img
-              src={safeAlbumCoverSrc(g.reveal.album_cover)}
-              alt=""
-              referrerPolicy="no-referrer"
-              className="mx-auto mt-4 h-40 w-40 border border-black/15 object-cover"
-              width={160}
-              height={160}
-              onError={(e) => {
-                const el = e.currentTarget;
-                if (el.getAttribute("data-fallback") === "1") return;
-                el.setAttribute("data-fallback", "1");
-                el.src = "/placeholder-album.svg";
-              }}
-            />
-            <h3 className="mt-4 text-lg font-black uppercase leading-tight text-black">
-              {g.reveal.title}
-            </h3>
-            <p className="mt-1 text-sm font-bold uppercase text-black/60">
-              {g.reveal.artist}
-            </p>
-            <button
-              type="button"
-              onClick={() => window.location.reload()}
-              className="mt-6 h-10 w-full text-xs font-black uppercase tracking-wider text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2"
-              style={{ backgroundColor: "#0000FF" }}
-            >
-              Zamknij
-            </button>
-          </div>
-        </div>
-      ) : null}
     </>
   );
 }
