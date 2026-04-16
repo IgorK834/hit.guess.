@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import Image from "next/image";
 import { Loader2, Search } from "lucide-react";
 
 import {
@@ -89,7 +90,7 @@ export function SearchCombobox({
   useLayoutEffect(() => {
     if (!open || !anchorRef.current) return;
     setPanelWidth(anchorRef.current.offsetWidth);
-  }, [open, query]);
+  }, [open]);
 
   const canShowPanel =
     !disabled &&
@@ -204,9 +205,10 @@ export function SearchCombobox({
                     onSelect={() => commit(r)}
                     className="rounded-none"
                   >
-                    <img
+                    <Image
                       src={safeAlbumCoverSrc(r.cover_url)}
-                      alt=""
+                      alt={`${r.title} cover`}
+                      unoptimized
                       width={32}
                       height={32}
                       referrerPolicy="no-referrer"

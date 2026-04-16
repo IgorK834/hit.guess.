@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import Image from "next/image";
 import { Check, Share2, X } from "lucide-react";
 
 import type { GuessSlot } from "@/hooks/use-game";
@@ -15,6 +16,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
 } from "@/components/ui/dialog";
 
 type ResultModalProps = {
@@ -50,11 +52,11 @@ export function ResultModal({
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
 
-  useEffect(() => {
-    if (!isOpen) setCopied(false);
-  }, [isOpen]);
-
   const isWin = gameStatus === "WON";
+  const handleClose = () => {
+    setCopied(false);
+    onClose();
+  };
 
   const shareText = useMemo(() => {
     const date = getLocalDateKey();
@@ -81,7 +83,10 @@ export function ResultModal({
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => (!open ? onClose() : null)}>
+    <Dialog
+      open={isOpen}
+      onOpenChange={(open) => (!open ? handleClose() : null)}
+    >
       <DialogContent
         showCloseButton={false}
         className="aspect-[5/3] w-[min(92vw,760px)] max-w-none gap-0 rounded-none border-black/70 bg-[#EBE7DF] p-0"
@@ -95,9 +100,12 @@ export function ResultModal({
                 <span className="text-black">KONIEC PRÓB</span>
               )}
             </DialogTitle>
+            <DialogDescription className="sr-only">
+              Szczegóły wyniku gry dla wybranej kategorii.
+            </DialogDescription>
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleClose}
               className="text-black/45 transition-colors hover:text-black focus:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 focus-visible:ring-offset-[#EBE7DF]"
               aria-label="Zamknij"
             >
@@ -109,9 +117,10 @@ export function ResultModal({
         <div className="border-b border-black/10 p-6">
           <div className="flex items-center gap-5">
             <div className="flex h-28 w-28 shrink-0 items-center justify-center border border-black/10 bg-white/40">
-              <img
+              <Image
                 src={safeAlbumCoverSrc(trackDetails.album_cover)}
                 alt={`${trackDetails.title} album cover`}
+                unoptimized
                 referrerPolicy="no-referrer"
                 className="h-full w-full object-cover"
                 width={112}
