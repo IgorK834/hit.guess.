@@ -23,12 +23,12 @@ export function GuessFields({ slots, activeIndex }: GuessFieldsProps) {
                 ? "bg-[#d9d5cf]"
                 : "bg-transparent",
               slot.variant === "correct" ? "border-[#0000FF] bg-[#EBE7DF]" : "",
-              slot.variant === "wrong" ? "border-black/25" : "",
-              slot.variant === "skip" ? "border-black/20" : "",
+              slot.variant === "wrong" ? "border-red-800/35 bg-[#EBE7DF]" : "",
+              slot.variant === "skip" ? "border-black/15 bg-transparent" : "",
             ].join(" ")}
           >
             {slot.variant === "wrong" && (
-              <X className="mr-2 h-3.5 w-3.5 shrink-0 text-black/55" aria-hidden />
+              <X className="mr-2 h-3.5 w-3.5 shrink-0 text-red-800" aria-hidden />
             )}
             {slot.variant === "correct" && (
               <Check
@@ -41,7 +41,7 @@ export function GuessFields({ slots, activeIndex }: GuessFieldsProps) {
               className={[
                 "truncate text-[11px] font-bold uppercase tracking-wide",
                 slot.variant === "empty" ? "text-black/35" : "",
-                slot.variant === "wrong" ? "text-black/80" : "",
+                slot.variant === "wrong" ? "text-red-900" : "",
                 slot.variant === "skip" ? "text-black/50" : "",
                 slot.variant === "correct" ? "text-black" : "",
               ].join(" ")}

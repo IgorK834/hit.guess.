@@ -251,6 +251,20 @@ export function AudioPlayer({
     stopRaf,
   ]);
 
+  // While the game is "LOCKED" (guess submitting), freeze playback immediately.
+  // This prevents any additional snippet time from being consumed during verification.
+  useEffect(() => {
+    if (!disabled) return;
+    const el = audioRef.current;
+    if (!el) return;
+    if (!playingRef.current) return;
+    el.pause();
+    playingRef.current = false;
+    setIsPlaying(false);
+    stopRaf();
+    onPlayingChangeRef.current?.(false);
+  }, [disabled, stopRaf]);
+
   // Chrome cannot play TIDAL HLS via raw <audio src>; hls.js handles that. Never gate the button on
   // canplay — those events often never fire for m3u8 in Chromium.
   const playDisabled = Boolean(disabled) || !previewUrl;

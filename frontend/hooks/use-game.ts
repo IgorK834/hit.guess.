@@ -641,11 +641,17 @@ export function useGame(category: string, opts?: { date?: string }) {
       if (s === "FINISHED" || s === "LOCKED") return s;
       return "PLAYING";
     });
-  }, []);
+
+    // Server-side playback timing validation has been removed; timing is enforced only
+    // by snippet capping on the client (audio-player) and backend guess validation.
+  }, [attemptsUsed, gameId, gameState, sessionId]);
 
   const pauseGame = useCallback(() => {
     setGameState((s) => (s === "PLAYING" ? "PAUSED" : s));
-  }, []);
+
+    if (!gameId || !sessionId) return;
+    // No-op: server-side playback timing validation has been removed.
+  }, [gameId, sessionId]);
 
   const reloadDaily = useCallback(async () => {
     setDailyLoading(true);

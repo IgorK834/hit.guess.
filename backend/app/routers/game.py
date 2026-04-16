@@ -206,7 +206,6 @@ class GuessRequest(BaseModel):
     game_id: uuid.UUID
     guessed_tidal_track_id: str = Field(min_length=1, max_length=64)
 
-
 class TrackDetails(BaseModel):
     title: str
     artist: str
@@ -218,7 +217,6 @@ class GuessResponse(BaseModel):
     attempts_used: int
     game_status: Literal["PLAYING", "WON", "LOST"]
     track_details: TrackDetails | None = None
-
 
 @router.post(
     "/guess",
