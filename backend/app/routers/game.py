@@ -8,7 +8,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import extract, select
 from sqlalchemy.exc import IntegrityError
 
 from app.core.datetime_utils import calendar_today_in_zone
@@ -90,6 +90,51 @@ class DailyGameResponse(BaseModel):
 
     game_id: uuid.UUID = Field(description="Opaque id for this daily round (not the TIDAL track id).")
     preview_url: str
+
+
+class CalendarMonthResponse(BaseModel):
+    available_dates: list[str] = Field(
+        description="Dates (YYYY-MM-DD) that have generated games for the requested month/category.",
+    )
+
+
+@router.get(
+    "/calendar",
+    response_model=CalendarMonthResponse,
+    summary="Available calendar dates for a month/category",
+)
+async def get_calendar_month(
+    db: DbSession,
+    year: Annotated[int, Query(ge=2000, le=2100)],
+    month: Annotated[int, Query(ge=1, le=12)],
+    category: Annotated[
+        str | None,
+        Query(description="Category pill label, e.g. POP, RAP, POLSKIE KLASYKI."),
+    ] = None,
+    x_client_timezone: Annotated[
+        str | None,
+        Header(
+            alias="X-Client-Timezone",
+            description="IANA timezone for the user's local calendar day (e.g. Europe/Warsaw).",
+        ),
+    ] = None,
+) -> CalendarMonthResponse:
+    today = calendar_today_in_zone(x_client_timezone)
+    music_category = _parse_ui_category(category)
+
+    result = await db.execute(
+        select(DailySong.target_date)
+        .where(
+            DailySong.category == music_category.value,
+            DailySong.target_date <= today,
+            extract("year", DailySong.target_date) == year,
+            extract("month", DailySong.target_date) == month,
+        )
+        .order_by(DailySong.target_date.asc())
+    )
+
+    available_dates = [d.isoformat() for d in result.scalars().all()]
+    return CalendarMonthResponse(available_dates=available_dates)
 
 
 @router.get(

@@ -2,14 +2,15 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Calendar as CalendarIcon, Check, ChevronLeft, ChevronRight, Play, X } from "lucide-react";
 
 import { CategoryPills } from "@/components/category-pills";
 import { dailyStateStorageKey, type GuessSlot } from "@/hooks/use-game";
+import { fetchCalendarMonth } from "@/lib/api";
 import { getLocalDateKey } from "@/lib/clientTimezone";
 
-type DayStatus = "won" | "lost" | "unplayed" | "today" | "future";
+type DayStatus = "won" | "lost" | "unplayed" | "today" | "future" | "unavailable";
 
 type DayData = {
   isoDate: string; // YYYY-MM-DD
@@ -94,6 +95,7 @@ export default function CalendarPage() {
   const pathname = usePathname();
   const [activeCategory, setActiveCategory] = useState<string>("POP");
   const [selectedDayIso, setSelectedDayIso] = useState<string | null>(null);
+  const [availableDates, setAvailableDates] = useState<string[]>([]);
 
   const today = new Date();
   const monthName = today.toLocaleDateString("pl-PL", { month: "long" });
@@ -107,7 +109,29 @@ export default function CalendarPage() {
   const firstDayOfMonth = new Date(year, monthIndex, 1).getDay();
   const startOffset = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
 
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const dates = await fetchCalendarMonth(activeCategory, year, monthIndex + 1);
+        if (!cancelled) {
+          setAvailableDates(dates);
+        }
+      } catch {
+        if (!cancelled) {
+          setAvailableDates([]);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeCategory, year, monthIndex]);
+
   const monthData = useMemo((): DayData[] => {
+    const availableSet = new Set(availableDates);
     // Compute from localStorage on the client. This component is `use client`, so
     // it is safe to access `window` after hydration without syncing state via effects.
     const data: DayData[] = [];
@@ -137,14 +161,14 @@ export default function CalendarPage() {
           }
           if (typeof persisted?.attemptsUsed === "number") attemptsUsed = persisted.attemptsUsed;
         } else {
-          status = "unplayed";
+          status = availableSet.has(iso) ? "unplayed" : "unavailable";
         }
       }
 
       data.push({ isoDate: iso, date: day, status, track, attemptsUsed });
     }
     return data;
-  }, [activeCategory, currentDay, daysInMonth, monthIndex, todayIso, year]);
+  }, [activeCategory, availableDates, currentDay, daysInMonth, monthIndex, todayIso, year]);
 
   const selectedDay =
     selectedDayIso != null
@@ -155,7 +179,7 @@ export default function CalendarPage() {
     const won = monthData.filter((d) => d.status === "won").length;
     const lost = monthData.filter((d) => d.status === "lost").length;
     const played = won + lost;
-    const total = monthData.filter((d) => d.status !== "future").length;
+    const total = monthData.filter((d) => d.status !== "future" && d.status !== "unavailable").length;
     const winRate = played > 0 ? Math.round((won / played) * 100) : 0;
     return { won, lost, played, total, winRate };
   }, [monthData]);
@@ -196,6 +220,7 @@ export default function CalendarPage() {
         return `${base} bg-[#0000FF] text-white cursor-pointer ${
           isSelected ? "ring-2 ring-black ring-offset-2 ring-offset-[#EBE7DF]" : ""
         }`;
+      case "unavailable":
       case "future":
         return `${base} bg-black/5 text-black/25 cursor-not-allowed`;
       default:
@@ -291,8 +316,8 @@ export default function CalendarPage() {
               <button
                 key={day.isoDate}
                 type="button"
-                onClick={() => day.status !== "future" && setSelectedDayIso(day.isoDate)}
-                disabled={day.status === "future"}
+                onClick={() => day.status !== "future" && day.status !== "unavailable" && setSelectedDayIso(day.isoDate)}
+                disabled={day.status === "future" || day.status === "unavailable"}
                 className={getDayClasses(day)}
               >
                 {day.date}

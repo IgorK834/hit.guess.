@@ -18,6 +18,46 @@ export type DailyGamePayload = {
   preview_url: string;
 };
 
+export type CalendarMonthPayload = {
+  available_dates: string[];
+};
+
+export type AssignDailySongPayload = {
+  date: string;
+  category: string;
+  tidal_track_id: string;
+};
+
+export type AssignDailySongResponse = {
+  ok: boolean;
+  date: string;
+  category: string;
+  tidal_track_id: string;
+  title: string;
+  artist: string;
+};
+
+export type AdminCalendarMonthPayload = {
+  assigned_dates: string[];
+};
+
+export type AdminDaySongResponse = {
+  exists: boolean;
+  date: string;
+  category: string;
+  editable: boolean;
+  tidal_track_id: string | null;
+  title: string | null;
+  artist: string | null;
+  album_cover: string | null;
+};
+
+export type DeleteDailySongResponse = {
+  ok: boolean;
+  date: string;
+  category: string;
+};
+
 export type SearchTrackResult = {
   tidal_id: string;
   title: string;
@@ -125,6 +165,126 @@ export async function fetchDailyGame(
     throw new ApiError(messageFromFastApiBody(res.status, body), res.status, body);
   }
   return parseJson<DailyGamePayload>(res);
+}
+
+export async function fetchCalendarMonth(
+  category: string,
+  year: number,
+  month: number,
+): Promise<string[]> {
+  const params = new URLSearchParams({
+    category: category.trim(),
+    year: String(year),
+    month: String(month),
+  });
+  const res = await fetch(`${getApiBaseUrl()}/api/v1/game/calendar?${params.toString()}`, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      ...gameApiHeaders(),
+    },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new ApiError(messageFromFastApiBody(res.status, body), res.status, body);
+  }
+  const payload = await parseJson<CalendarMonthPayload>(res);
+  return Array.isArray(payload.available_dates) ? payload.available_dates : [];
+}
+
+export async function assignDailySong(
+  payload: AssignDailySongPayload,
+  adminToken: string,
+): Promise<AssignDailySongResponse> {
+  const res = await fetch(`${getApiBaseUrl()}/api/v1/admin/assign-song`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "X-Admin-Token": adminToken.trim(),
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new ApiError(messageFromFastApiBody(res.status, body), res.status, body);
+  }
+  return parseJson<AssignDailySongResponse>(res);
+}
+
+export async function fetchAdminCalendarMonth(
+  category: string,
+  year: number,
+  month: number,
+  adminToken: string,
+): Promise<string[]> {
+  const params = new URLSearchParams({
+    category: category.trim(),
+    year: String(year),
+    month: String(month),
+  });
+  const res = await fetch(`${getApiBaseUrl()}/api/v1/admin/calendar?${params.toString()}`, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      "X-Admin-Token": adminToken.trim(),
+    },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new ApiError(messageFromFastApiBody(res.status, body), res.status, body);
+  }
+  const payload = await parseJson<AdminCalendarMonthPayload>(res);
+  return Array.isArray(payload.assigned_dates) ? payload.assigned_dates : [];
+}
+
+export async function fetchAdminDaySong(
+  date: string,
+  category: string,
+  adminToken: string,
+): Promise<AdminDaySongResponse> {
+  const params = new URLSearchParams({
+    date,
+    category: category.trim(),
+  });
+  const res = await fetch(`${getApiBaseUrl()}/api/v1/admin/day?${params.toString()}`, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      "X-Admin-Token": adminToken.trim(),
+    },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new ApiError(messageFromFastApiBody(res.status, body), res.status, body);
+  }
+  return parseJson<AdminDaySongResponse>(res);
+}
+
+export async function deleteDailySong(
+  date: string,
+  category: string,
+  adminToken: string,
+): Promise<DeleteDailySongResponse> {
+  const params = new URLSearchParams({
+    date,
+    category: category.trim(),
+  });
+  const res = await fetch(`${getApiBaseUrl()}/api/v1/admin/day?${params.toString()}`, {
+    method: "DELETE",
+    headers: {
+      Accept: "application/json",
+      "X-Admin-Token": adminToken.trim(),
+    },
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new ApiError(messageFromFastApiBody(res.status, body), res.status, body);
+  }
+  return parseJson<DeleteDailySongResponse>(res);
 }
 
 export async function searchTracks(query: string): Promise<SearchTrackResult[]> {
