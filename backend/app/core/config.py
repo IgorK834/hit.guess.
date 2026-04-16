@@ -63,6 +63,11 @@ class Settings(BaseSettings):
         ),
     )
 
+    admin_token: SecretStr | None = Field(
+        default=None,
+        validation_alias="ADMIN_TOKEN",
+    )
+
     # Comma-separated browser origins for CORS (required when frontend is on another host:port).
     cors_allow_origins: str = Field(
         default=(

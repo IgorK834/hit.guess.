@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.db.session import engine
-from app.routers import cover, game, health, preview, search, stats, v1
+from app.routers import admin, cover, game, health, preview, search, stats, v1
 from app.scheduler import setup_scheduler
 
 
@@ -52,6 +52,7 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(v1.router, prefix="/api/v1")
 app.include_router(game.router, prefix="/api/v1/game")
+app.include_router(admin.router, prefix="/api/v1/admin")
 app.include_router(cover.router, prefix="/api/v1/cover")
 app.include_router(preview.router, prefix="/api/v1/preview")
 app.include_router(search.router, prefix="/api/v1/search")
