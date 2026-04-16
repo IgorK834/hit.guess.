@@ -42,10 +42,12 @@ export function useHitGuessDevConsole(
   const forceRef = useRef(opts.forceFinish);
   const mockRef = useRef(opts.injectMock);
 
-  reloadRef.current = opts.reloadDaily;
-  getGameIdRef.current = opts.getGameId;
-  forceRef.current = opts.forceFinish;
-  mockRef.current = opts.injectMock;
+  useEffect(() => {
+    reloadRef.current = opts.reloadDaily;
+    getGameIdRef.current = opts.getGameId;
+    forceRef.current = opts.forceFinish;
+    mockRef.current = opts.injectMock;
+  }, [opts.reloadDaily, opts.getGameId, opts.forceFinish, opts.injectMock]);
 
   useEffect(() => {
     if (!ENABLE_DEV_MODE || typeof window === "undefined") {
@@ -62,7 +64,6 @@ export function useHitGuessDevConsole(
       force: (s) => forceRef.current(s),
       mock: (m) => mockRef.current(m),
       help: () => {
-        // eslint-disable-next-line no-console
         console.info(
           "%c[HIT.GUESS dev]%c\n" +
             "  hitguess.reset()         — nowa runda (bieżąca kategoria), nowa sesja, świeży /daily\n" +
@@ -82,7 +83,6 @@ export function useHitGuessDevConsole(
 
     window.hitguess = api;
     if (process.env.NODE_ENV === "development") {
-      // eslint-disable-next-line no-console
       console.info(
         "%c[HIT.GUESS dev]%c Wpisz hitguess.help() — reset gry z konsoli.",
         "color:#0000FF;font-weight:bold",

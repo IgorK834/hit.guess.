@@ -9,7 +9,6 @@ type GlobalErrorProps = {
 
 export default function Error({ error, reset }: GlobalErrorProps) {
   useEffect(() => {
-    // eslint-disable-next-line no-console
     console.error("[HIT.GUESS] Unhandled app error", error);
   }, [error]);
 

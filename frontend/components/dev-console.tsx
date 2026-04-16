@@ -64,8 +64,6 @@ export function DevConsole(props: DevConsoleActions) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  if (!ENABLE_DEV_MODE) return null;
-
   const force = (s: "WON" | "LOST") => {
     const date = getLocalDateKey();
     const gid = (props.gameId ?? "").trim();
@@ -114,6 +112,8 @@ export function DevConsole(props: DevConsoleActions) {
     forceFinish: force,
     injectMock: mock,
   });
+
+  if (!ENABLE_DEV_MODE) return null;
 
   return (
     <div className="fixed bottom-3 right-3 z-[80]">

@@ -62,7 +62,9 @@ export function AudioPlayer({
   const playingRef = useRef(false);
   /** Parent often passes an inline `onPlayingChange` → must not land in effect deps. */
   const onPlayingChangeRef = useRef(onPlayingChange);
-  onPlayingChangeRef.current = onPlayingChange;
+  useEffect(() => {
+    onPlayingChangeRef.current = onPlayingChange;
+  }, [onPlayingChange]);
 
   const segmentLimit = useMemo(() => {
     if (isFinished) {
@@ -93,30 +95,37 @@ export function AudioPlayer({
   }, []);
 
   const pumpPlayback = useCallback(() => {
-    const el = audioRef.current;
-    if (!el || !playingRef.current) {
-      stopRaf();
-      return;
-    }
+    // Use a local `tick` closure to avoid self-referencing `pumpPlayback`
+    // (helps keep React/ESLint happy and ensures RAF cancellation works).
+    const tick = () => {
+      const el = audioRef.current;
+      if (!el || !playingRef.current) {
+        stopRaf();
+        return;
+      }
 
-    const t = el.currentTime;
-    if (t >= segmentLimit) {
-      el.pause();
-      el.currentTime = segmentLimit;
-      setDisplayTime(segmentLimit);
-      setPlaying(false);
-      stopRaf();
-      return;
-    }
+      const t = el.currentTime;
+      if (t >= segmentLimit) {
+        el.pause();
+        el.currentTime = segmentLimit;
+        setDisplayTime(segmentLimit);
+        setPlaying(false);
+        stopRaf();
+        return;
+      }
 
-    setDisplayTime(t);
-    rafRef.current = requestAnimationFrame(pumpPlayback);
+      setDisplayTime(t);
+      rafRef.current = requestAnimationFrame(tick);
+    };
+
+    tick();
   }, [segmentLimit, setPlaying, stopRaf]);
 
   useEffect(() => {
     if (!previewUrl) {
       hlsRef.current?.destroy();
       hlsRef.current = null;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDisplayTime(0);
       stopRaf();
       playingRef.current = false;
@@ -204,6 +213,7 @@ export function AudioPlayer({
     if (!el || !previewUrl) return;
     el.pause();
     el.currentTime = 0;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDisplayTime(0);
     playingRef.current = false;
     setIsPlaying(false);
@@ -260,6 +270,7 @@ export function AudioPlayer({
     if (!playingRef.current) return;
     el.pause();
     playingRef.current = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsPlaying(false);
     stopRaf();
     onPlayingChangeRef.current?.(false);

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Calendar as CalendarIcon, Check, ChevronLeft, ChevronRight, Play, X } from "lucide-react";
 
 import { CategoryPills } from "@/components/category-pills";
@@ -74,7 +74,7 @@ function computeStreak(monthData: DayData[], todayIso: string): number {
   const today = parseIsoDate(todayIso);
   if (!today) return 0;
 
-  let cursor = new Date(today);
+  const cursor = new Date(today);
   let streak = 0;
   while (true) {
     const iso = getLocalDateKey(cursor);
@@ -93,8 +93,7 @@ function computeStreak(monthData: DayData[], todayIso: string): number {
 export default function CalendarPage() {
   const pathname = usePathname();
   const [activeCategory, setActiveCategory] = useState<string>("POP");
-  const [monthData, setMonthData] = useState<DayData[]>([]);
-  const [selectedDay, setSelectedDay] = useState<DayData | null>(null);
+  const [selectedDayIso, setSelectedDayIso] = useState<string | null>(null);
 
   const today = new Date();
   const monthName = today.toLocaleDateString("pl-PL", { month: "long" });
@@ -108,8 +107,9 @@ export default function CalendarPage() {
   const firstDayOfMonth = new Date(year, monthIndex, 1).getDay();
   const startOffset = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
 
-  useEffect(() => {
-    // Load after hydration to avoid mismatch.
+  const monthData = useMemo((): DayData[] => {
+    // Compute from localStorage on the client. This component is `use client`, so
+    // it is safe to access `window` after hydration without syncing state via effects.
     const data: DayData[] = [];
     for (let day = 1; day <= daysInMonth; day++) {
       const iso = isoForDay(year, monthIndex, day);
@@ -143,9 +143,13 @@ export default function CalendarPage() {
 
       data.push({ isoDate: iso, date: day, status, track, attemptsUsed });
     }
-    setMonthData(data);
-    setSelectedDay(null);
+    return data;
   }, [activeCategory, currentDay, daysInMonth, monthIndex, todayIso, year]);
+
+  const selectedDay =
+    selectedDayIso != null
+      ? monthData.find((d) => d.isoDate === selectedDayIso) ?? null
+      : null;
 
   const stats = useMemo(() => {
     const won = monthData.filter((d) => d.status === "won").length;
@@ -179,7 +183,7 @@ export default function CalendarPage() {
   const getDayClasses = (day: DayData) => {
     const base =
       "w-full aspect-square flex items-center justify-center text-xs font-mono relative transition-all";
-    const isSelected = selectedDay?.date === day.date;
+    const isSelected = selectedDayIso === day.isoDate;
 
     switch (day.status) {
       case "won":
@@ -287,7 +291,7 @@ export default function CalendarPage() {
               <button
                 key={day.isoDate}
                 type="button"
-                onClick={() => day.status !== "future" && setSelectedDay(day)}
+                onClick={() => day.status !== "future" && setSelectedDayIso(day.isoDate)}
                 disabled={day.status === "future"}
                 className={getDayClasses(day)}
               >

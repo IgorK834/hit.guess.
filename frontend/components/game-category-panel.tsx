@@ -34,7 +34,10 @@ export function GameCategoryPanel({ category, date }: GameCategoryPanelProps) {
   useEffect(() => {
     const shouldOpen =
       g.isFinished && g.reveal && (g.gameStatus === "WON" || g.gameStatus === "LOST");
-    if (shouldOpen) setResultOpen(true);
+    if (shouldOpen) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setResultOpen(true);
+    }
   }, [g.isFinished, g.gameStatus, g.reveal]);
 
   const previewForAudio =
