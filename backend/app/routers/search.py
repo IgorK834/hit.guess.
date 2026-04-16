@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 import time
 from typing import Annotated
@@ -11,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
 
 from app.core.config import settings
-from app.core.redis_cache import normalize_search_query
+from app.core.redis_cache import cache_get_json, cache_set_json, normalize_search_query
 from app.deps import HttpClient, RedisClient, TidalAuth
 from app.services.tidal_auth import TidalAuthError
 from app.services.tidal_openapi import search_tracks_with_display_metadata
@@ -20,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["search"])
 
-SEARCH_CACHE_PREFIX = "search:"
+SEARCH_CACHE_PREFIX = "search:tidal:"
 SEARCH_CACHE_TTL_SECONDS = 86400
 SEARCH_RATE_LIMIT_PER_MINUTE = 15
 SEARCH_RATE_LIMIT_WINDOW_SECONDS = 60
@@ -44,8 +42,7 @@ def _client_ip(request: Request) -> str:
 
 def _search_cache_key(query: str) -> str:
     normalized = normalize_search_query(query)
-    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-    return f"{SEARCH_CACHE_PREFIX}{digest}"
+    return f"{SEARCH_CACHE_PREFIX}{normalized}"
 
 
 def _rate_limit_key(ip: str, window: int) -> str:
@@ -57,15 +54,22 @@ async def enforce_search_rate_limit(request: Request, redis: RedisClient) -> Non
     window = now // SEARCH_RATE_LIMIT_WINDOW_SECONDS
     ip = _client_ip(request)
     key = _rate_limit_key(ip, window)
-    count = await redis.incr(key)
-    if count == 1:
-        await redis.expire(key, SEARCH_RATE_LIMIT_WINDOW_SECONDS * 2)
-    if count > SEARCH_RATE_LIMIT_PER_MINUTE:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Search rate limit exceeded. Try again later.",
-            headers={"Retry-After": str(SEARCH_RATE_LIMIT_WINDOW_SECONDS)},
-        )
+    try:
+        count = await redis.incr(key)
+        if count == 1:
+            await redis.expire(key, SEARCH_RATE_LIMIT_WINDOW_SECONDS * 2)
+        if count > SEARCH_RATE_LIMIT_PER_MINUTE:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Search rate limit exceeded. Try again later.",
+                headers={"Retry-After": str(SEARCH_RATE_LIMIT_WINDOW_SECONDS)},
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # Redis failure must not break the search feature.
+        logger.warning("Redis unavailable for search rate limiting; skipping. err=%s", exc)
+        return
 
 
 @router.get(
@@ -81,14 +85,13 @@ async def search_tracks(
     q: Annotated[str, Query(min_length=2, max_length=256, description="Search text")],
 ) -> list[SearchTrackItem]:
     cache_key = _search_cache_key(q)
-    cached_raw = await redis.get(cache_key)
-    if cached_raw is not None:
-        try:
-            data = json.loads(cached_raw)
-            if isinstance(data, list):
-                return [SearchTrackItem.model_validate(item) for item in data]
-        except (json.JSONDecodeError, ValueError):
-            logger.warning("Invalid search cache entry for key=%s", cache_key)
+    try:
+        cached = await cache_get_json(redis, cache_key)
+        if isinstance(cached, list):
+            return [SearchTrackItem.model_validate(item) for item in cached]
+    except Exception as exc:
+        # Cache is an optimization; on failure we just fall back to live search.
+        logger.warning("Search cache read failed (Redis). err=%s key=%s", exc, cache_key)
 
     try:
         token = await tidal_auth.get_access_token()
@@ -125,9 +128,14 @@ async def search_tracks(
         ) from exc
 
     items = [SearchTrackItem.model_validate(r) for r in rows]
-    await redis.setex(
-        cache_key,
-        SEARCH_CACHE_TTL_SECONDS,
-        json.dumps([i.model_dump() for i in items], separators=(",", ":")),
-    )
+    try:
+        await cache_set_json(
+            redis,
+            cache_key,
+            [i.model_dump() for i in items],
+            ttl_seconds=SEARCH_CACHE_TTL_SECONDS,
+        )
+    except Exception as exc:
+        # Cache is best-effort.
+        logger.warning("Search cache write failed (Redis). err=%s key=%s", exc, cache_key)
     return items
