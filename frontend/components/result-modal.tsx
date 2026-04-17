@@ -1,15 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { Check, Share2, X } from "lucide-react";
 
 import type { GuessSlot } from "@/hooks/use-game";
-import type { TrackDetails } from "@/lib/api";
+import type { GameStatsResponse, TrackDetails } from "@/lib/api";
+import { fetchGameStats } from "@/lib/api";
 import { getLocalDateKey } from "@/lib/clientTimezone";
 import { safeAlbumCoverSrc } from "@/lib/cover-url";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { GuessDistribution } from "@/components/guess-distribution";
 import {
   Dialog,
   DialogContent,
@@ -22,6 +24,7 @@ import {
 type ResultModalProps = {
   isOpen: boolean;
   onClose: () => void;
+  gameId: string;
   category: string;
   gameStatus: "WON" | "LOST";
   slots: GuessSlot[];
@@ -44,6 +47,7 @@ function generateEmojiGrid(slots: GuessSlot[]): string {
 export function ResultModal({
   isOpen,
   onClose,
+  gameId,
   category,
   gameStatus,
   slots,
@@ -51,12 +55,45 @@ export function ResultModal({
 }: ResultModalProps) {
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
+  const [stats, setStats] = useState<GameStatsResponse | null>(null);
+  const [statsError, setStatsError] = useState<string | null>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
 
   const isWin = gameStatus === "WON";
+  const userAttempt = useMemo(() => {
+    const idx = slots.findIndex((s) => s.variant === "correct");
+    if (idx === -1) return null;
+    return idx + 1;
+  }, [slots]);
   const handleClose = () => {
     setCopied(false);
     onClose();
   };
+
+  useEffect(() => {
+    const gid = gameId.trim();
+    if (!isOpen || gid.length === 0) return;
+    let cancelled = false;
+    setStatsLoading(true);
+    setStatsError(null);
+    void (async () => {
+      try {
+        const data = await fetchGameStats(gid);
+        if (cancelled) return;
+        setStats(data);
+      } catch (e) {
+        if (cancelled) return;
+        setStats(null);
+        setStatsError(e instanceof Error ? e.message : "Failed to load community stats.");
+      } finally {
+        if (cancelled) return;
+        setStatsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [gameId, isOpen]);
 
   const shareText = useMemo(() => {
     const date = getLocalDateKey();
@@ -149,6 +186,24 @@ export function ResultModal({
               </span>
             </div>
           </div>
+        </div>
+
+        <div className="border-b border-black/10 p-4">
+          {statsLoading ? (
+            <div className="font-mono text-[10px] font-bold uppercase text-black/45">
+              Loading community stats...
+            </div>
+          ) : stats ? (
+            <GuessDistribution
+              distribution={stats.distribution}
+              totalWins={stats.total_wins}
+              userAttempt={isWin ? userAttempt : null}
+            />
+          ) : (
+            <div className="font-mono text-[10px] font-bold uppercase text-black/45">
+              {statsError ?? "Community stats unavailable."}
+            </div>
+          )}
         </div>
 
         <div className="border-b border-black/10 p-4">

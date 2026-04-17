@@ -84,6 +84,11 @@ export type GuessResponse = {
   track_details: TrackDetails | null;
 };
 
+export type GameStatsResponse = {
+  distribution: Record<"1" | "2" | "3" | "4" | "5" | "6", number>;
+  total_wins: number;
+};
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -285,6 +290,20 @@ export async function deleteDailySong(
     throw new ApiError(messageFromFastApiBody(res.status, body), res.status, body);
   }
   return parseJson<DeleteDailySongResponse>(res);
+}
+
+export async function fetchGameStats(gameId: string): Promise<GameStatsResponse> {
+  const gid = gameId.trim();
+  const res = await fetch(`${getApiBaseUrl()}/api/v1/game/${encodeURIComponent(gid)}/stats`, {
+    method: "GET",
+    headers: { Accept: "application/json" },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new ApiError(messageFromFastApiBody(res.status, body), res.status, body);
+  }
+  return parseJson<GameStatsResponse>(res);
 }
 
 export async function searchTracks(query: string): Promise<SearchTrackResult[]> {

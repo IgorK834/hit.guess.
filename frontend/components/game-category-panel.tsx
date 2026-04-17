@@ -66,6 +66,7 @@ export function GameCategoryPanel({ category, date }: GameCategoryPanelProps) {
         <ResultModal
           isOpen={resultOpen}
           onClose={() => setResultOpen(false)}
+          gameId={g.gameId ?? ""}
           category={category}
           gameStatus={g.gameStatus}
           slots={g.slots}
