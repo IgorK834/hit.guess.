@@ -81,6 +81,11 @@ export function AudioPlayer({
   const [isPlaying, setIsPlaying] = useState(false);
   const [displayTime, setDisplayTime] = useState(0);
 
+  const segmentLimitRef = useRef(segmentLimit);
+  useEffect(() => {
+    segmentLimitRef.current = segmentLimit;
+  }, [segmentLimit]);
+
   const stopRaf = useCallback(() => {
     if (rafRef.current != null) {
       cancelAnimationFrame(rafRef.current);
@@ -105,10 +110,11 @@ export function AudioPlayer({
       }
 
       const t = el.currentTime;
-      if (t >= segmentLimit) {
+      const currentLimit = segmentLimitRef.current;
+      if (t >= currentLimit) {
         el.pause();
-        el.currentTime = segmentLimit;
-        setDisplayTime(segmentLimit);
+        el.currentTime = currentLimit;
+        setDisplayTime(currentLimit);
         setPlaying(false);
         stopRaf();
         return;
@@ -119,7 +125,7 @@ export function AudioPlayer({
     };
 
     tick();
-  }, [segmentLimit, setPlaying, stopRaf]);
+  }, [setPlaying, stopRaf]);
 
   useEffect(() => {
     if (!previewUrl) {
@@ -219,7 +225,7 @@ export function AudioPlayer({
     setIsPlaying(false);
     onPlayingChangeRef.current?.(false);
     stopRaf();
-  }, [attemptEpoch, previewUrl, segmentLimit, stopRaf, deckId]);
+  }, [previewUrl, stopRaf, deckId]);
 
   useEffect(() => () => stopRaf(), [stopRaf]);
 
@@ -260,21 +266,6 @@ export function AudioPlayer({
     setPlaying,
     stopRaf,
   ]);
-
-  // While the game is "LOCKED" (guess submitting), freeze playback immediately.
-  // This prevents any additional snippet time from being consumed during verification.
-  useEffect(() => {
-    if (!disabled) return;
-    const el = audioRef.current;
-    if (!el) return;
-    if (!playingRef.current) return;
-    el.pause();
-    playingRef.current = false;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setIsPlaying(false);
-    stopRaf();
-    onPlayingChangeRef.current?.(false);
-  }, [disabled, stopRaf]);
 
   // Chrome cannot play TIDAL HLS via raw <audio src>; hls.js handles that. Never gate the button on
   // canplay — those events often never fire for m3u8 in Chromium.
