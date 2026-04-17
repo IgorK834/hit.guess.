@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[2]
@@ -20,6 +20,20 @@ class Settings(BaseSettings):
         default="postgresql+asyncpg://hitguess:hitguess@localhost:5432/hitguess",
         validation_alias="DATABASE_URL",
     )
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def normalize_database_url_for_asyncpg(cls, v: object) -> object:
+        """Railway/Heroku-style URLs often use postgres:// or postgresql:// without +asyncpg."""
+        if not isinstance(v, str):
+            return v
+        s = v.strip()
+        if s.startswith("postgres://"):
+            return "postgresql+asyncpg://" + s[len("postgres://") :]
+        if s.startswith("postgresql://") and not s.startswith("postgresql+asyncpg://"):
+            return "postgresql+asyncpg://" + s[len("postgresql://") :]
+        return s
+
     redis_url: str = Field(
         default="redis://localhost:6379/0",
         validation_alias="REDIS_URL",

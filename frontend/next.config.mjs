@@ -23,8 +23,15 @@ const remotePatterns = [
   { protocol: "https", hostname: "images.tidal.com", pathname: "/**" },
 ];
 
-// Dev-local API (common in local development).
-remotePatterns.push({ protocol: "http", hostname: "localhost", port: "8000", pathname: "/**" });
+// Dev-local API only (production uses NEXT_PUBLIC_API_URL via addApiOriginPattern).
+if (process.env.NODE_ENV !== "production") {
+  remotePatterns.push({
+    protocol: "http",
+    hostname: "localhost",
+    port: "8000",
+    pathname: "/**",
+  });
+}
 
 // If cover proxy URLs are absolute, allow the configured API origin too.
 addApiOriginPattern(remotePatterns);
@@ -32,11 +39,10 @@ addApiOriginPattern(remotePatterns);
 const nextConfig = {
   // App Router: Server Components default to SSR/streaming; static routes are prerendered (SSG).
   reactStrictMode: true,
+  output: "standalone",
   images: {
     remotePatterns,
   },
-  // Use `output: "standalone"` only when you build a Docker image and copy `.next/static`
-  // per Next docs — it is easy to misconfigure locally and get 404s on `/_next/*` assets.
 };
 
 export default nextConfig;

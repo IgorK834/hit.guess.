@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.db.base import Base
 from app.models import (  # noqa: F401 — register metadata
     daily_song,
+    game_distribution,
     game_stat,
     leaderboard,
     song,
