@@ -60,7 +60,7 @@ export function wipeAllHitGuessLocalStorage(): void {
 export type GameState = "IDLE" | "PLAYING" | "PAUSED" | "LOCKED" | "FINISHED";
 
 export const GUESS_DURATIONS_MS = [
-  1000, 2000, 4000, 7000, 11000, 16000,
+  500, 1000, 2000, 4000, 8000, 16000,
 ] as const;
 
 export const AUDIO_SEGMENT_CAPS = GUESS_DURATIONS_MS.map((ms) => ms / 1000) as unknown as readonly [

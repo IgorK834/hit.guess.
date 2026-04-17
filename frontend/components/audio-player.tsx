@@ -16,7 +16,7 @@ import { proxiedTidalPreviewUrl } from "@/lib/preview-url";
 const TIMELINE_GAME_SECONDS = 16;
 const TIMELINE_WIN_SECONDS = 30;
 
-const DIVIDER_SECONDS = [1, 2, 4, 7, 11] as const;
+const DIVIDER_SECONDS = [0.5, 1, 2, 4, 8] as const;
 
 function clampAttempt(n: number): number {
   return Math.min(
