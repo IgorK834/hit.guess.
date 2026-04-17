@@ -15,6 +15,10 @@ from app.core.datetime_utils import calendar_today_in_zone
 from app.deps import DbSession, HttpClient, RedisClient, TidalAuth
 from app.models.daily_song import DailySong
 from app.models.leaderboard import LeaderboardEntry
+
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from app.models.game_distribution import GameDistribution
+
 from app.services.daily_selector import (
     DailyMusicCategory,
     ensure_daily_song_for_category,
@@ -246,7 +250,40 @@ async def get_daily_game(
     )
 
 
+
+class GameStatsResponse(BaseModel):
+    distribution: dict[str, int]
+    total_wins: int
+
+@router.get(
+    "/{game_id}/stats",
+    response_model=GameStatsResponse,
+    summary="Global guess distribution for a specific game",
+)
+async def get_game_stats(
+    game_id: uuid.UUID,
+    db: DbSession,
+) -> GameStatsResponse:
+    result = await db.execute(select(GameDistribution).where(GameDistribution.game_id == game_id))
+    dist = result.scalar_one_or_none()
+    if not dist:
+        return GameStatsResponse(
+            distribution={"1": 0, "2": 0, "3": 0, "4": 0, "5": 0, "6": 0},
+            total_wins=0,
+        )
+    d = {
+        "1": dist.attempt_1,
+        "2": dist.attempt_2,
+        "3": dist.attempt_3,
+        "4": dist.attempt_4,
+        "5": dist.attempt_5,
+        "6": dist.attempt_6,
+    }
+    total = sum(d.values())
+    return GameStatsResponse(distribution=d, total_wins=total)
+
 class GuessRequest(BaseModel):
+
     session_id: uuid.UUID
     game_id: uuid.UUID
     guessed_tidal_track_id: str = Field(min_length=1, max_length=64)
@@ -299,6 +336,17 @@ async def submit_guess(
         )
 
     if gs.won_transition:
+        # Global stats should count every win transition (not only leaderboard-eligible IPs).
+        attempts_clamped = min(max(gs.attempts, 1), 6)
+        col_name = f"attempt_{attempts_clamped}"
+        stmt = pg_insert(GameDistribution).values(game_id=daily.internal_id, **{col_name: 1})
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["game_id"],
+            set_={col_name: getattr(GameDistribution, col_name) + 1},
+        )
+        await db.execute(stmt)
+        await db.commit()
+
         if not is_first_terminal_for_ip:
             logger.info(
                 "Leaderboard skip (IP already finished this daily category): ip=%s game_date=%s category=%s session=%s",
