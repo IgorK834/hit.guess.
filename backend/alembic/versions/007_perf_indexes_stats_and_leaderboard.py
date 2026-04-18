@@ -1,6 +1,6 @@
 """Add performance indexes for stats and leaderboard.
 
-Revision ID: 007_perf_indexes_stats_and_leaderboard
+Revision ID: 007_perf_indexes
 Revises: b9cb21031ca2
 Create Date: 2026-04-18
 
@@ -12,7 +12,7 @@ from alembic import op
 
 
 # revision identifiers, used by Alembic.
-revision: str = "007_perf_indexes_stats_and_leaderboard"
+revision: str = "007_perf_indexes"
 down_revision: Union[str, None] = "b9cb21031ca2"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
