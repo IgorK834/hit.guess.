@@ -56,7 +56,8 @@ In the backend service → **Variables**, add:
 | `REDIS_URL` | **Reference** `${{Redis.REDIS_URL}}` from the **Redis** plugin. |
 | `TIDAL_CLIENT_ID` | Your TIDAL client id (plain string). |
 | `TIDAL_CLIENT_SECRET` | Your TIDAL client secret (mark as **secret** in Railway). |
-| `CORS_ALLOW_ORIGINS` | Comma-separated **exact** origins allowed to call the API from the browser, **no spaces**. Include **every** frontend URL you use, e.g. `https://your-frontend.up.railway.app` and later `https://hitguess.com`. |
+| `CORS_ALLOW_ORIGINS` | Comma-separated **exact** origins allowed to call the API from the browser, **no spaces**. **Must** include your real frontend origin, e.g. `https://hitguess-frontend.up.railway.app`. If this is missing or wrong, the browser shows **CORS** errors and **OPTIONS … 400** (preflight rejected). |
+| `CORS_ALLOW_ORIGIN_REGEX` | **Optional.** Regex for extra allowed origins (e.g. all Railway app hosts). Example: `^https://[a-z0-9-]+\.up\.railway\.app$` — use only if you accept any matching Railway subdomain calling your API from browsers. |
 
 Optional:
 
@@ -148,6 +149,7 @@ The repo root **`docker-compose.yml`** only defines **Postgres + Redis** for loc
 
 ## 6. Troubleshooting (short)
 
+- **HTTP 502 on the public URL:** The edge proxy cannot reach your app. (1) Open **Deploy Logs** (not only HTTP metrics): if the process crashes on boot (Alembic, `redis.ping`, DB SSL, missing env), nothing listens → 502. (2) Under **Networking → Public**, the **target port** must equal the port your process binds to — same as Railway’s **`PORT`** variable (often `8080`). If logs say Next is listening on `3000` but the proxy targets `8080`, you get 502; align them (set `PORT` in Variables to match the public target, or change the public target to match logs).
 - **`Dockerfile` does not exist` with Root Directory `backend` or `frontend`:** Set **Dockerfile path** to `Dockerfile` (no leading slash). `/Dockerfile` points at the **repository root**, not inside `backend/` or `frontend/`.
 - **CORS errors in the browser:** Backend `CORS_ALLOW_ORIGINS` must include the **exact** frontend origin (scheme + host + port if any). No trailing slash on origins.
 - **`Missing NEXT_PUBLIC_API_URL` in production bundle:** Set the variable **and** the Docker **build arg**, then redeploy the frontend.

@@ -31,15 +31,14 @@ from app.services.game_guess_state import (
     score_for_win,
 )
 from app.services.tidal_auth import TidalAuthError, TidalAuthService
-from app.core.config import settings
-from app.services.tidal_openapi import fetch_preview_manifest_uri, fetch_track_display_metadata
+from app.services.tidal_openapi import fetch_preview_manifest_uri
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["game"])
 
 _DAILY_GEN_LOCK_SEC = 55
-_DAILY_GEN_LOCK_BLOCK_SEC = 50
+_DAILY_GEN_LOCK_BLOCK_SEC = 3
 _TERMINAL_IP_MARK_TTL_SEC = 8 * 24 * 3600
 
 # TIDAL preview manifest URLs are short-lived; caching avoids ~1s OpenAPI round-trip on every GET /daily.
@@ -58,33 +57,45 @@ async def _resolve_preview_manifest_url(
     cache_key = f"{_PREVIEW_MANIFEST_CACHE_PREFIX}{tidal_track_id}"
     try:
         cached = await redis_client.get(cache_key)
-        if isinstance(cached, str) and cached.strip():
-            return cached.strip()
+        cached_str = cached.decode("utf-8") if isinstance(cached, bytes) else cached
+        if isinstance(cached_str, str) and cached_str.strip():
+            return cached_str.strip()
     except Exception as exc:
         logger.warning("Preview manifest cache read failed track_id=%s err=%s", tidal_track_id, exc)
 
-    try:
-        token = await tidal_auth.get_access_token()
-    except TidalAuthError:
-        logger.warning(
-            "TIDAL auth failed; returning stored preview_url (may be expired) track_id=%s",
-            tidal_track_id,
-        )
-        return stored_preview_url
+    lock = redis_client.lock(f"lock:{cache_key}", timeout=10, blocking_timeout=5)
+    async with lock:
+        # Double-check cache after acquiring lock to avoid stampede under concurrent misses.
+        try:
+            cached = await redis_client.get(cache_key)
+            cached_str = cached.decode("utf-8") if isinstance(cached, bytes) else cached
+            if isinstance(cached_str, str) and cached_str.strip():
+                return cached_str.strip()
+        except Exception as exc:
+            logger.warning("Preview manifest cache read failed track_id=%s err=%s", tidal_track_id, exc)
 
-    fresh = await fetch_preview_manifest_uri(http, token, tidal_track_id)
-    if not fresh:
-        logger.warning(
-            "Could not refresh preview manifest; stored URL may 403 track_id=%s",
-            tidal_track_id,
-        )
-        return stored_preview_url
+        try:
+            token = await tidal_auth.get_access_token()
+        except TidalAuthError:
+            logger.warning(
+                "TIDAL auth failed; returning stored preview_url (may be expired) track_id=%s",
+                tidal_track_id,
+            )
+            return stored_preview_url
 
-    try:
-        await redis_client.setex(cache_key, _PREVIEW_MANIFEST_CACHE_TTL_SEC, fresh)
-    except Exception as exc:
-        logger.warning("Preview manifest cache write failed track_id=%s err=%s", tidal_track_id, exc)
-    return fresh
+        fresh = await fetch_preview_manifest_uri(http, token, tidal_track_id)
+        if not fresh:
+            logger.warning(
+                "Could not refresh preview manifest; stored URL may 403 track_id=%s",
+                tidal_track_id,
+            )
+            return stored_preview_url
+
+        try:
+            await redis_client.setex(cache_key, _PREVIEW_MANIFEST_CACHE_TTL_SEC, fresh)
+        except Exception as exc:
+            logger.warning("Preview manifest cache write failed track_id=%s err=%s", tidal_track_id, exc)
+        return fresh
 
 
 def _client_ip(request: Request) -> str:
@@ -342,8 +353,6 @@ async def submit_guess(
     body: GuessRequest,
     db: DbSession,
     redis: RedisClient,
-    tidal_auth: TidalAuth,
-    http: HttpClient,
 ) -> GuessResponse:
     result = await db.execute(select(DailySong).where(DailySong.internal_id == body.game_id))
     daily = result.scalar_one_or_none()
@@ -411,21 +420,7 @@ async def submit_guess(
         cover = daily.album_cover
         # If daily seed stored a placeholder (or cover parsing failed), resolve cover art live.
         # This does NOT reveal the answer early — it only runs for terminal rounds.
-        if cover == settings.tidal_placeholder_cover_url or "placehold.co" in (cover or ""):
-            try:
-                token = await tidal_auth.get_access_token()
-                meta = await fetch_track_display_metadata(
-                    http,
-                    token,
-                    daily.tidal_track_id,
-                    country_code=settings.tidal_country_code,
-                )
-                if meta is not None:
-                    _, _, resolved_cover = meta
-                    if resolved_cover and resolved_cover != settings.tidal_placeholder_cover_url:
-                        cover = resolved_cover
-            except Exception:
-                logger.debug("Could not resolve cover art for terminal round", exc_info=True)
+        # Disabled on /guess critical path to keep endpoint latency minimal.
         details = TrackDetails(
             title=daily.title,
             artist=daily.artist,

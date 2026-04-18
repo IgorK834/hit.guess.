@@ -22,10 +22,12 @@ RUN npm run build
 FROM node:22-bookworm-slim AS runner
 WORKDIR /app
 
+# Do not set PORT here — Railway injects PORT at runtime. Next standalone uses
+# process.env.PORT || 3000 (see .next/standalone/server.js). Public Networking
+# "target port" must match that value (often 8080 on Railway).
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
-    HOSTNAME=0.0.0.0 \
-    PORT=3000
+    HOSTNAME=0.0.0.0
 
 RUN groupadd --system --gid 1001 nodejs \
     && useradd --system --uid 1001 --gid nodejs nextjs

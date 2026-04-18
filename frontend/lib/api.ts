@@ -2,6 +2,19 @@ import { gameApiHeaders, getLocalDateKey } from "@/lib/clientTimezone";
 
 const DEV_DEFAULT_API = "http://localhost:8000";
 
+/** If NEXT_PUBLIC_API_URL has no scheme, browsers treat fetch() URLs as path-relative → requests hit the Next host (404). */
+function normalizeApiBaseUrl(raw: string): string {
+  const trimmed = raw.trim().replace(/\/$/, "");
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+  const isLocalHost =
+    /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(trimmed) ||
+    trimmed.startsWith("localhost:") ||
+    trimmed.startsWith("127.0.0.1:");
+  return isLocalHost ? `http://${trimmed}` : `https://${trimmed}`;
+}
+
 export function getApiBaseUrl(): string {
   const isProd = process.env.NODE_ENV === "production";
   const base = process.env.NEXT_PUBLIC_API_URL ?? (isProd ? "" : DEV_DEFAULT_API);
@@ -10,7 +23,7 @@ export function getApiBaseUrl(): string {
       "Missing NEXT_PUBLIC_API_URL. Set it in Vercel project env vars (Production/Preview) or in `.env.local` for development.",
     );
   }
-  return base.replace(/\/$/, "");
+  return normalizeApiBaseUrl(base);
 }
 
 export type DailyGamePayload = {

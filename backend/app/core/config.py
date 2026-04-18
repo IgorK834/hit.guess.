@@ -93,6 +93,12 @@ class Settings(BaseSettings):
         ),
         validation_alias="CORS_ALLOW_ORIGINS",
     )
+    # Optional: any origin matching this regex is allowed (in addition to cors_allow_origins).
+    # Example for Railway preview hosts: ^https://[a-z0-9-]+\\.up\\.railway\\.app$
+    cors_allow_origin_regex: str | None = Field(
+        default=None,
+        validation_alias="CORS_ALLOW_ORIGIN_REGEX",
+    )
 
 
 settings = Settings()
