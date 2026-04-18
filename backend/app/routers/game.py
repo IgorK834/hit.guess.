@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import date
@@ -12,6 +13,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import extract, select
 from sqlalchemy.exc import IntegrityError
+from redis.exceptions import LockError
 
 from app.core.datetime_utils import calendar_today_in_zone
 from app.deps import DbSession, HttpClient, RedisClient, TidalAuth
@@ -44,9 +46,10 @@ _TERMINAL_IP_MARK_TTL_SEC = 8 * 24 * 3600
 # TIDAL preview manifest URLs are short-lived; caching avoids ~1s OpenAPI round-trip on every GET /daily.
 _PREVIEW_MANIFEST_CACHE_PREFIX = "tidal:preview_manifest:v1:"
 _PREVIEW_MANIFEST_CACHE_TTL_SEC = 900  # 15 minutes — balance freshness vs latency
+_PREVIEW_MANIFEST_FAST_REFRESH_TIMEOUT_SEC = 0.35
 
 
-async def _resolve_preview_manifest_url(
+async def _refresh_preview_manifest_url(
     redis_client: redis.Redis,
     tidal_auth: TidalAuthService,
     http: httpx.AsyncClient,
@@ -54,17 +57,29 @@ async def _resolve_preview_manifest_url(
     tidal_track_id: str,
     stored_preview_url: str,
 ) -> str:
-    cache_key = f"{_PREVIEW_MANIFEST_CACHE_PREFIX}{tidal_track_id}"
-    try:
-        cached = await redis_client.get(cache_key)
-        cached_str = cached.decode("utf-8") if isinstance(cached, bytes) else cached
-        if isinstance(cached_str, str) and cached_str.strip():
-            return cached_str.strip()
-    except Exception as exc:
-        logger.warning("Preview manifest cache read failed track_id=%s err=%s", tidal_track_id, exc)
+    """
+    Refresh the preview manifest URL from TIDAL and cache it.
 
-    lock = redis_client.lock(f"lock:{cache_key}", timeout=10, blocking_timeout=5)
-    async with lock:
+    This function may do external HTTP and should not be awaited on latency-critical paths
+    unless guarded by a short timeout.
+    """
+    cache_key = f"{_PREVIEW_MANIFEST_CACHE_PREFIX}{tidal_track_id}"
+    lock = redis_client.lock(f"lock:{cache_key}", timeout=10)
+    acquired = False
+    try:
+        # Fail-fast and avoid a cache stampede when TTL expires (many users hit /daily simultaneously).
+        acquired = await lock.acquire(blocking=True, blocking_timeout=2)
+        if not acquired:
+            # Someone else is refreshing. Return cached if it appeared; otherwise fall back to stored URL.
+            try:
+                cached = await redis_client.get(cache_key)
+                cached_str = cached.decode("utf-8") if isinstance(cached, bytes) else cached
+                if isinstance(cached_str, str) and cached_str.strip():
+                    return cached_str.strip()
+            except Exception as exc:
+                logger.warning("Preview manifest cache read failed track_id=%s err=%s", tidal_track_id, exc)
+            return stored_preview_url
+
         # Double-check cache after acquiring lock to avoid stampede under concurrent misses.
         try:
             cached = await redis_client.get(cache_key)
@@ -96,6 +111,59 @@ async def _resolve_preview_manifest_url(
         except Exception as exc:
             logger.warning("Preview manifest cache write failed track_id=%s err=%s", tidal_track_id, exc)
         return fresh
+    except LockError as exc:
+        logger.warning("Preview manifest lock error track_id=%s err=%s", tidal_track_id, exc)
+        return stored_preview_url
+    finally:
+        if acquired:
+            try:
+                await lock.release()
+            except Exception:
+                logger.debug("Preview manifest lock release failed track_id=%s", tidal_track_id, exc_info=True)
+
+
+async def _resolve_preview_manifest_url(
+    redis_client: redis.Redis,
+    tidal_auth: TidalAuthService,
+    http: httpx.AsyncClient,
+    *,
+    tidal_track_id: str,
+    stored_preview_url: str,
+) -> str:
+    cache_key = f"{_PREVIEW_MANIFEST_CACHE_PREFIX}{tidal_track_id}"
+    try:
+        cached = await redis_client.get(cache_key)
+        cached_str = cached.decode("utf-8") if isinstance(cached, bytes) else cached
+        if isinstance(cached_str, str) and cached_str.strip():
+            return cached_str.strip()
+    except Exception as exc:
+        logger.warning("Preview manifest cache read failed track_id=%s err=%s", tidal_track_id, exc)
+
+    try:
+        # Attempt a fast refresh (bounded) to improve the chance of returning a valid URL
+        # without making /daily consistently slow in production.
+        return await asyncio.wait_for(
+            _refresh_preview_manifest_url(
+                redis_client,
+                tidal_auth,
+                http,
+                tidal_track_id=tidal_track_id,
+                stored_preview_url=stored_preview_url,
+            ),
+            timeout=_PREVIEW_MANIFEST_FAST_REFRESH_TIMEOUT_SEC,
+        )
+    except TimeoutError:
+        # Return fast; refresh in the background for the next request.
+        asyncio.create_task(
+            _refresh_preview_manifest_url(
+                redis_client,
+                tidal_auth,
+                http,
+                tidal_track_id=tidal_track_id,
+                stored_preview_url=stored_preview_url,
+            )
+        )
+        return stored_preview_url
 
 
 def _client_ip(request: Request) -> str:
@@ -245,12 +313,17 @@ async def get_daily_game(
     row = result.scalar_one_or_none()
     if row is None:
         lock_key = f"lock:daily_song_generation:{target_day.isoformat()}:{music_category.value}"
-        lock = redis.lock(
-            lock_key,
-            timeout=_DAILY_GEN_LOCK_SEC,
-            blocking_timeout=_DAILY_GEN_LOCK_BLOCK_SEC,
-        )
-        async with lock:
+        lock = redis.lock(lock_key, timeout=_DAILY_GEN_LOCK_SEC)
+        acquired = False
+        try:
+            # Fail-fast: do not block request workers for tens of seconds waiting for generation.
+            acquired = await lock.acquire(blocking=True, blocking_timeout=_DAILY_GEN_LOCK_BLOCK_SEC)
+            if not acquired:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Daily song generation in progress. Please retry shortly.",
+                )
+
             result = await db.execute(
                 select(DailySong).where(
                     DailySong.target_date == target_day,
@@ -273,6 +346,23 @@ async def get_daily_game(
                     ),
                 )
                 row = result.scalar_one_or_none()
+        except LockError as exc:
+            logger.warning("Daily generation lock error date=%s category=%s err=%s", target_day, music_category.value, exc)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Daily song generation temporarily unavailable. Please retry shortly.",
+            ) from exc
+        finally:
+            if acquired:
+                try:
+                    await lock.release()
+                except Exception:
+                    logger.debug(
+                        "Daily generation lock release failed date=%s category=%s",
+                        target_day,
+                        music_category.value,
+                        exc_info=True,
+                    )
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
