@@ -6,6 +6,8 @@ from datetime import date
 from datetime import datetime
 from typing import Annotated, Literal
 
+import httpx
+import redis.asyncio as redis
 from fastapi import APIRouter, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import extract, select
@@ -28,7 +30,7 @@ from app.services.game_guess_state import (
     game_state_redis_key,
     score_for_win,
 )
-from app.services.tidal_auth import TidalAuthError
+from app.services.tidal_auth import TidalAuthError, TidalAuthService
 from app.core.config import settings
 from app.services.tidal_openapi import fetch_preview_manifest_uri, fetch_track_display_metadata
 
@@ -39,6 +41,50 @@ router = APIRouter(tags=["game"])
 _DAILY_GEN_LOCK_SEC = 55
 _DAILY_GEN_LOCK_BLOCK_SEC = 50
 _TERMINAL_IP_MARK_TTL_SEC = 8 * 24 * 3600
+
+# TIDAL preview manifest URLs are short-lived; caching avoids ~1s OpenAPI round-trip on every GET /daily.
+_PREVIEW_MANIFEST_CACHE_PREFIX = "tidal:preview_manifest:v1:"
+_PREVIEW_MANIFEST_CACHE_TTL_SEC = 900  # 15 minutes — balance freshness vs latency
+
+
+async def _resolve_preview_manifest_url(
+    redis_client: redis.Redis,
+    tidal_auth: TidalAuthService,
+    http: httpx.AsyncClient,
+    *,
+    tidal_track_id: str,
+    stored_preview_url: str,
+) -> str:
+    cache_key = f"{_PREVIEW_MANIFEST_CACHE_PREFIX}{tidal_track_id}"
+    try:
+        cached = await redis_client.get(cache_key)
+        if isinstance(cached, str) and cached.strip():
+            return cached.strip()
+    except Exception as exc:
+        logger.warning("Preview manifest cache read failed track_id=%s err=%s", tidal_track_id, exc)
+
+    try:
+        token = await tidal_auth.get_access_token()
+    except TidalAuthError:
+        logger.warning(
+            "TIDAL auth failed; returning stored preview_url (may be expired) track_id=%s",
+            tidal_track_id,
+        )
+        return stored_preview_url
+
+    fresh = await fetch_preview_manifest_uri(http, token, tidal_track_id)
+    if not fresh:
+        logger.warning(
+            "Could not refresh preview manifest; stored URL may 403 track_id=%s",
+            tidal_track_id,
+        )
+        return stored_preview_url
+
+    try:
+        await redis_client.setex(cache_key, _PREVIEW_MANIFEST_CACHE_TTL_SEC, fresh)
+    except Exception as exc:
+        logger.warning("Preview manifest cache write failed track_id=%s err=%s", tidal_track_id, exc)
+    return fresh
 
 
 def _client_ip(request: Request) -> str:
@@ -222,27 +268,13 @@ async def get_daily_game(
             detail="No daily song configured for requested day.",
         )
     # Stored `preview_url` contains time-limited tokens; TIDAL returns 403 when they expire.
-    preview_url = row.preview_url
-    try:
-        token = await tidal_auth.get_access_token()
-    except TidalAuthError:
-        logger.warning(
-            "TIDAL auth failed; returning stored preview_url (may be expired) track_id=%s",
-            row.tidal_track_id,
-        )
-    else:
-        fresh = await fetch_preview_manifest_uri(
-            http,
-            token,
-            row.tidal_track_id,
-        )
-        if fresh:
-            preview_url = fresh
-        else:
-            logger.warning(
-                "Could not refresh preview manifest; stored URL may 403 track_id=%s",
-                row.tidal_track_id,
-            )
+    preview_url = await _resolve_preview_manifest_url(
+        redis,
+        tidal_auth,
+        http,
+        tidal_track_id=row.tidal_track_id,
+        stored_preview_url=row.preview_url,
+    )
 
     return DailyGameResponse(
         game_id=row.internal_id,
